@@ -1,38 +1,53 @@
 # Hinglish Transcriptor
 
-Free, self-hosted transcription of any audio/video file into **Hinglish** (Hindi written in Roman letters, English words kept as English).
+Free, self-hosted transcription of any audio/video file into **Hinglish** (Hindi written in Roman letters, English words kept as English), with user accounts.
 
 - **Any format**: anything ffmpeg can read (mp3, wav, m4a, ogg, opus, flac, mp4, mkv, mov, webm, amr, ...).
-- **Any length**: the file is decoded, split at natural pauses into ~10 minute parts, and transcribed one part at a time, so a multi-hour recording works in roughly constant memory. Text streams to the page as it is produced.
-- **Nothing stored**: no database. The upload and every intermediate file live in a temp folder that is deleted when the request ends (and swept on startup if the server crashed). The transcript exists only in your browser until you download it.
-- **Free and local**: runs [faster-whisper](https://github.com/SYSTRAN/faster-whisper) on your machine; no API keys.
+- **Any length**: the file is decoded, split at natural pauses into ~10 minute parts, and transcribed one part at a time, so a multi-hour recording works in roughly constant memory. Text streams to the page live.
+- **Audio is never stored**: uploads and intermediate files live in a per-request temp folder that is deleted when the request ends (and swept on startup after a crash). MongoDB holds only user accounts (bcrypt-hashed passwords) and each user's transcript *text*.
+- **Free and local**: runs [faster-whisper](https://github.com/SYSTRAN/faster-whisper); no API keys.
 
-## Run
+## Stack
 
-1. Install [Python 3.10+](https://www.python.org/downloads/) and [ffmpeg](https://ffmpeg.org/download.html) (`winget install Gyan.FFmpeg`).
-2. Then:
+FastAPI backend, MongoDB, plain HTML/JS front end, login via an httpOnly JWT cookie.
 
-   ```
-   python -m venv .venv
-   .venv\Scripts\activate        # Linux/Mac: source .venv/bin/activate
-   pip install -r requirements.txt
-   uvicorn app:app --port 8000
-   ```
-3. Open http://localhost:8000 and drop a file. The first run downloads the model (about 3 GB for `large-v3`).
+## Run with Docker (recommended)
 
-## Settings (environment variables)
+1. `copy .env.example .env`, then edit `.env`: set `MONGO_PASSWORD`, and `JWT_SECRET` (32+ random characters; generate with `openssl rand -hex 32`, or in PowerShell: `-join ((48..57)+(97..102) | Get-Random -Count 64 | % {[char]$_})`).
+2. `docker compose up -d --build`
+3. Open http://localhost:8000, sign up, drop a file.
 
-| Variable | Default | Notes |
+The first transcription downloads the model (about 3 GB for `large-v3`) into the `model-cache` volume; later runs reuse it. On a CPU-only machine set `WHISPER_MODEL=small` or `medium` in `.env`.
+
+Useful commands: `docker compose logs -f app`, `docker compose down` (keeps data), `docker compose down -v` (also wipes users and transcripts).
+
+## Run without Docker
+
+Needs Python 3.10+, ffmpeg and a MongoDB. Start only the database with `docker compose up -d mongo` (add a `ports: ["27017:27017"]` entry to the mongo service first), then:
+
+```
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+set JWT_SECRET=<32+ random chars>
+set MONGO_URI=mongodb://<user>:<password>@localhost:27017/?authSource=admin
+uvicorn app:app --port 8000
+```
+
+## API
+
+| Method | Path | Notes |
 |---|---|---|
-| `WHISPER_MODEL` | `large-v3` | Most accurate. On CPU-only machines use `medium` or `small` for speed. |
-| `WHISPER_DEVICE` | `auto` | `cpu` or `cuda` |
-| `WHISPER_COMPUTE` | `auto` | e.g. `float16` (GPU), `int8` (CPU) |
-| `CHUNK_SECONDS` | `600` | Target length of each part |
+| POST | `/api/register`, `/api/login` | JSON `{email, password}`, sets session cookie |
+| POST | `/api/logout`, GET `/api/me` | |
+| POST | `/transcribe` | multipart `file`, `language`, `hinglish`; streams NDJSON events |
+| GET | `/api/transcripts`, `/api/transcripts/{id}` | your history only |
+| DELETE | `/api/transcripts/{id}` | |
 
-## How Hinglish works
+## Deploying publicly
 
-Whisper has no "Hinglish" mode. We transcribe as Hindi with a Roman-script Hinglish prompt (which nudges it to write Latin letters and keep English words), and any Devanagari that still slips through is converted to Roman by `hinglish.py`.
+Put it behind HTTPS (Caddy/nginx) and set `COOKIE_SECURE=true` on the app. Anyone who can register can use your CPU/GPU, so add invite-only signup or rate limits before exposing it.
 
 ## Honest limits
 
-No speech-to-text is 100% error-free. Accuracy drops with noise, overlapping speakers and heavy accents, and Hinglish spelling is inherently non-standard (`nahi` / `nahin`). `large-v3` on a GPU is the most accurate setup; `large-v3` on CPU is slower than real time.
+No speech-to-text is 100% error-free. Accuracy drops with noise, overlapping speakers and heavy accents, and Hinglish spelling is non-standard (`nahi` / `nahin`). `large-v3` on a GPU is most accurate; on CPU it is slower than real time.
