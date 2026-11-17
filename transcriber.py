@@ -15,6 +15,7 @@ from pathlib import Path
 
 import numpy as np
 
+import cleanup
 from hinglish import to_hinglish
 
 MODEL_SIZE = os.getenv("WHISPER_MODEL", "large-v3")
@@ -73,10 +74,13 @@ def _run(cmd):
     return subprocess.run(cmd, capture_output=True, text=True, errors="replace")
 
 
-def decode_to_wav(src: Path, dst: Path):
-    """Any audio/video container -> 16 kHz mono PCM wav."""
-    r = _run(["ffmpeg", "-nostdin", "-y", "-i", str(src), "-vn", "-map", "0:a:0?",
-              "-ac", "1", "-ar", str(SR), "-c:a", "pcm_s16le", str(dst)])
+def decode_to_wav(src: Path, dst: Path, denoise=True):
+    """Any audio/video container -> 16 kHz mono PCM wav (optionally noise-reduced)."""
+    cmd = ["ffmpeg", "-nostdin", "-y", "-i", str(src), "-vn", "-map", "0:a:0?", "-ac", "1"]
+    if denoise:
+        # cut rumble and hiss outside the speech band, then spectral noise reduction
+        cmd += ["-af", "highpass=f=80,lowpass=f=7500,afftdn=nf=-25"]
+    r = _run(cmd + ["-ar", str(SR), "-c:a", "pcm_s16le", str(dst)])
     if r.returncode != 0 or not dst.exists() or dst.stat().st_size < 100:
         raise ValueError("Could not read audio from this file (no audio track or unsupported format).")
 
@@ -111,12 +115,13 @@ def read_slice(wav_path: Path, t0, t1):
     return np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
 
 
-def transcribe_stream(src: Path, workdir: Path, language="hi", hinglish=True):
+def transcribe_stream(src: Path, workdir: Path, language="hi", hinglish=True,
+                      denoise=True, clean=True):
     """Yield event dicts: status, info, segment, progress, done."""
     with _job_lock:
         wav = workdir / "audio.wav"
         yield {"type": "status", "message": "Reading audio..."}
-        decode_to_wav(src, wav)
+        decode_to_wav(src, wav, denoise)
         src.unlink(missing_ok=True)  # original upload no longer needed
 
         with wave.open(str(wav), "rb") as w:
@@ -131,6 +136,7 @@ def transcribe_stream(src: Path, workdir: Path, language="hi", hinglish=True):
         model = get_model()
         lang = None if language == "auto" else language
         context = ""
+        repeats = cleanup.RepeatFilter()
         for idx, (t0, t1) in enumerate(chunks):
             yield {"type": "status", "message": f"Transcribing part {idx + 1} of {len(chunks)}..."}
             audio = read_slice(wav, t0, t1)
@@ -151,6 +157,10 @@ def transcribe_stream(src: Path, workdir: Path, language="hi", hinglish=True):
                 text = s.text.strip()
                 if hinglish:
                     text = to_hinglish(text)
+                if clean:
+                    text = cleanup.clean_text(text)
+                    if cleanup.is_junk(s, text) or not repeats.keep(text):
+                        continue
                 if not text:
                     continue
                 texts.append(text)

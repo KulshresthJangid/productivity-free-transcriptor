@@ -7,108 +7,119 @@
 <style>
   :root { --bg:#fff; --fg:#1b1d21; --muted:#6b7280; --line:#e3e5ea; --accent:#2f5bea; --card:#f6f7f9; --err:#c62828; }
   @media (prefers-color-scheme: dark) { :root { --bg:#14161a; --fg:#e8eaee; --muted:#9aa1ad; --line:#2a2e36; --accent:#6b8cff; --card:#1c1f25; --err:#ef7b7b; } }
-  * { box-sizing: border-box; }
+  * { box-sizing:border-box; }
   [hidden] { display:none !important; }
-  body { margin:0; font:16px/1.5 system-ui,sans-serif; background:var(--bg); color:var(--fg); }
-  h1 { font-size:1.4rem; margin:0 0 4px; }
+  body { margin:0; font:16px/1.55 system-ui,sans-serif; background:var(--bg); color:var(--fg); }
+  .wrap { max-width:680px; margin:0 auto; padding:20px 16px 56px; }
   .muted { color:var(--muted); }
-  input, select, button { font:inherit; padding:9px 14px; border-radius:8px; border:1px solid var(--line); background:var(--card); color:var(--fg); }
+  h1 { font-size:1.35rem; margin:0; }
+  input, select, button { font:inherit; padding:10px 14px; border-radius:10px; border:1px solid var(--line); background:var(--card); color:var(--fg); min-height:44px; }
   button { cursor:pointer; }
-  button.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
-  button:disabled { opacity:.5; cursor:default; }
-  .row { display:flex; gap:12px; flex-wrap:wrap; align-items:center; margin:16px 0; }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; font-weight:600; }
+  button:disabled { opacity:.45; cursor:default; }
+  button.link { background:none; border:none; color:var(--accent); padding:0 4px; min-height:0; text-decoration:underline; }
 
-  #auth { max-width:380px; margin:12vh auto 0; padding:0 16px; }
-  #auth form { display:flex; flex-direction:column; gap:12px; margin-top:20px; }
-  #autherr { color:var(--err); min-height:1.4em; font-size:.9rem; }
-  #toggle { background:none; border:none; color:var(--accent); padding:0; text-decoration:underline; }
+  header { display:flex; justify-content:space-between; align-items:center; gap:12px; padding-bottom:16px; }
+  header .who { font-size:.85rem; display:flex; gap:10px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
 
-  #app { display:grid; grid-template-columns:260px 1fr; min-height:100vh; }
-  aside { border-right:1px solid var(--line); padding:20px 16px; background:var(--card); }
-  aside h2 { font-size:.8rem; text-transform:uppercase; letter-spacing:.05em; color:var(--muted); margin:20px 0 8px; }
-  .item { display:flex; justify-content:space-between; gap:8px; padding:8px 10px; border-radius:8px; cursor:pointer; font-size:.9rem; }
-  .item:hover, .item.active { background:var(--line); }
-  .item span.t { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .item button { padding:0 6px; border:none; background:none; color:var(--muted); }
-  main { padding:28px 24px 64px; max-width:820px; width:100%; }
-  #drop { border:2px dashed var(--line); border-radius:12px; padding:34px 16px; text-align:center; cursor:pointer; background:var(--card); }
-  #drop.over { border-color:var(--accent); }
-  progress { width:100%; height:10px; }
-  #status { color:var(--muted); font-size:.9rem; min-height:1.4em; }
-  #out { white-space:pre-wrap; background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; min-height:120px; margin-top:12px; }
+  #auth { max-width:360px; margin:14vh auto 0; }
+  #auth form { display:flex; flex-direction:column; gap:12px; margin:20px 0 12px; }
+  #autherr { color:var(--err); font-size:.9rem; min-height:1.3em; }
+
+  #drop { border:2px dashed var(--line); border-radius:14px; padding:32px 16px; text-align:center; cursor:pointer; background:var(--card); }
+  #drop.over, #drop:hover { border-color:var(--accent); }
+  #drop b { display:block; margin-bottom:2px; }
+
+  .opts { display:flex; flex-direction:column; gap:8px; margin:16px 0; }
+  .opts label { display:flex; gap:10px; align-items:center; cursor:pointer; }
+  .opts input[type=checkbox] { width:20px; height:20px; min-height:0; accent-color:var(--accent); }
+  .opts small { color:var(--muted); }
+  .actions { display:flex; gap:10px; }
+  .actions .primary { flex:1; }
+
+  progress { width:100%; height:8px; margin-top:16px; }
+  #status { color:var(--muted); font-size:.9rem; min-height:1.4em; margin-top:6px; }
+  #out { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px 16px; margin-top:12px; line-height:1.7; }
+  #out .ts { color:var(--muted); font-size:.75rem; margin-right:8px; font-variant-numeric:tabular-nums; }
   #out div { margin-bottom:4px; }
-  .ts { color:var(--muted); font-size:.8rem; margin-right:8px; font-variant-numeric:tabular-nums; }
-  @media (max-width:760px) { #app { grid-template-columns:1fr; } aside { border-right:none; border-bottom:1px solid var(--line); } }
+  .exports { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-top:12px; }
+
+  details { margin-top:28px; border-top:1px solid var(--line); padding-top:14px; }
+  summary { cursor:pointer; font-weight:600; }
+  .item { display:flex; justify-content:space-between; gap:8px; align-items:center; padding:10px 4px; border-bottom:1px solid var(--line); cursor:pointer; }
+  .item .t { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .item small { color:var(--muted); white-space:nowrap; }
+  .item button { border:none; background:none; min-height:0; padding:4px 10px; color:var(--muted); font-size:1.2rem; }
+
+  @media (max-width:480px) { .exports { grid-template-columns:1fr; } #drop { padding:26px 12px; } }
 </style>
 </head>
 <body>
 
-<section id="auth" hidden>
+<section id="auth" class="wrap" hidden>
   <h1>Hinglish Transcriptor</h1>
-  <p class="muted">Sign in to transcribe audio and video into Hinglish.</p>
+  <p class="muted">Log in to turn audio or video into Hinglish text.</p>
   <form id="authform">
     <input id="email" type="email" placeholder="Email" autocomplete="email" required>
-    <input id="password" type="password" placeholder="Password (8+ characters)" minlength="8" autocomplete="current-password" required>
+    <input id="password" type="password" placeholder="Password (8+ characters)" minlength="8" required>
     <button class="primary" id="authbtn">Log in</button>
-    <div id="autherr"></div>
   </form>
-  <span class="muted" id="switchtext">No account?</span> <button id="toggle">Sign up</button>
+  <div id="autherr"></div>
+  <span class="muted" id="switchtext">No account?</span> <button class="link" id="toggle">Sign up</button>
 </section>
 
-<div id="app" hidden>
-  <aside>
-    <strong id="who"></strong><br>
-    <button id="logout" style="margin-top:8px">Log out</button>
-    <h2>History</h2>
+<div id="app" class="wrap" hidden>
+  <header>
+    <h1>Hinglish Transcriptor</h1>
+    <div class="who"><span class="muted" id="who"></span><button class="link" id="logout">Log out</button></div>
+  </header>
+
+  <div id="drop"><b>Choose or drop an audio / video file</b><span class="muted" id="fname">Any format, any length</span></div>
+  <input id="file" type="file" accept="audio/*,video/*,.mkv,.opus,.m4a,.amr,.wma" hidden>
+
+  <div class="opts">
+    <select id="lang" aria-label="Language">
+      <option value="hi">Hinglish (Roman letters)</option>
+      <option value="auto">Auto-detect language</option>
+      <option value="en">English</option>
+    </select>
+    <label><input type="checkbox" id="denoise" checked><span>Reduce background noise <small>(cleans audio first)</small></span></label>
+    <label><input type="checkbox" id="clean" checked><span>Remove junk <small>(laughing, music, "hmm", nonsense lines)</small></span></label>
+  </div>
+
+  <div class="actions">
+    <button id="go" class="primary" disabled>Transcribe</button>
+    <button id="stop" disabled>Stop</button>
+  </div>
+
+  <progress id="bar" value="0" max="100" hidden></progress>
+  <div id="status"></div>
+  <div id="out" hidden></div>
+  <div class="exports" id="exports" hidden>
+    <button id="copy">Copy text</button>
+    <button id="dltxt">Download .txt</button>
+    <button id="dlsrt">Download .srt</button>
+  </div>
+
+  <details id="histbox">
+    <summary>History</summary>
     <div id="history"></div>
-  </aside>
-  <main>
-    <h1>New transcription</h1>
-    <p class="muted">Any audio or video, any length. The file is deleted from the server as soon as it is transcribed; only the text is saved to your history.</p>
-
-    <div id="drop">Drop a file here or click to choose<br><small id="fname" class="muted"></small></div>
-    <input id="file" type="file" accept="audio/*,video/*,.mkv,.opus,.m4a,.amr,.wma" hidden>
-
-    <div class="row">
-      <label>Output
-        <select id="lang">
-          <option value="hi">Hinglish (Roman script)</option>
-          <option value="auto">Auto-detect language</option>
-          <option value="en">English</option>
-        </select>
-      </label>
-      <button id="go" class="primary" disabled>Transcribe</button>
-      <button id="stop" disabled>Stop</button>
-    </div>
-
-    <progress id="bar" value="0" max="100" hidden></progress>
-    <div id="status"></div>
-    <div id="out"></div>
-
-    <div class="row">
-      <button id="copy" disabled>Copy text</button>
-      <button id="dltxt" disabled>Download .txt</button>
-      <button id="dlsrt" disabled>Download .srt</button>
-    </div>
-  </main>
+  </details>
 </div>
 
 <script>
 const $ = id => document.getElementById(id);
-let file = null, segs = [], ctrl = null, title = 'transcript', mode = 'login', activeId = null;
+let file = null, segs = [], ctrl = null, title = 'transcript', mode = 'login';
 
 async function api(path, opts = {}) {
   const res = await fetch(path, { credentials: 'same-origin', ...opts });
-  if (res.status === 401 && path !== '/api/login') { showAuth(); throw new Error('Not logged in'); }
+  if (res.status === 401) { showAuth(); throw new Error('Please log in again'); }
   return res;
 }
 
 // ---------- auth ----------
 function showAuth() { $('auth').hidden = false; $('app').hidden = true; }
-async function showApp(user) {
-  $('auth').hidden = true; $('app').hidden = false; $('who').textContent = user.email;
-  loadHistory();
-}
+function showApp(user) { $('auth').hidden = true; $('app').hidden = false; $('who').textContent = user.email; loadHistory(); }
 function setMode(m) {
   mode = m;
   $('authbtn').textContent = m === 'login' ? 'Log in' : 'Create account';
@@ -119,41 +130,33 @@ function setMode(m) {
 }
 $('toggle').onclick = () => setMode(mode === 'login' ? 'register' : 'login');
 $('authform').onsubmit = async e => {
-  e.preventDefault();
-  $('autherr').textContent = '';
+  e.preventDefault(); $('autherr').textContent = '';
   const res = await fetch('/api/' + mode, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
     body: JSON.stringify({ email: $('email').value, password: $('password').value })
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    $('autherr').textContent = typeof data.detail === 'string' ? data.detail : 'Check your email and password (8+ characters).';
-    return;
-  }
-  $('password').value = '';
-  showApp(data);
+  if (!res.ok) { $('autherr').textContent = typeof data.detail === 'string' ? data.detail : 'Enter a valid email and a password of 8+ characters.'; return; }
+  $('password').value = ''; showApp(data);
 };
 $('logout').onclick = async () => { await fetch('/api/logout', { method: 'POST' }); location.reload(); };
 
 // ---------- history ----------
 async function loadHistory() {
-  const res = await api('/api/transcripts');
-  const items = await res.json();
+  const items = await (await api('/api/transcripts')).json();
   const box = $('history'); box.textContent = '';
-  if (!items.length) { box.innerHTML = '<span class="muted">Nothing yet</span>'; return; }
+  if (!items.length) { box.innerHTML = '<p class="muted">Nothing yet.</p>'; return; }
   for (const t of items) {
-    const row = document.createElement('div');
-    row.className = 'item' + (t.id === activeId ? ' active' : '');
+    const row = document.createElement('div'); row.className = 'item';
     const name = document.createElement('span'); name.className = 't'; name.textContent = t.title;
-    name.title = new Date(t.created_at).toLocaleString();
-    const del = document.createElement('button'); del.textContent = '×'; del.title = 'Delete';
-    row.append(name, del);
+    const date = document.createElement('small'); date.textContent = new Date(t.created_at).toLocaleDateString();
+    const del = document.createElement('button'); del.textContent = '×'; del.title = 'Delete'; del.setAttribute('aria-label', 'Delete');
+    row.append(name, date, del);
     row.onclick = () => openTranscript(t.id);
     del.onclick = async ev => {
       ev.stopPropagation();
       if (!confirm('Delete "' + t.title + '"?')) return;
       await api('/api/transcripts/' + t.id, { method: 'DELETE' });
-      if (activeId === t.id) clearOutput();
       loadHistory();
     };
     box.append(row);
@@ -161,26 +164,15 @@ async function loadHistory() {
 }
 async function openTranscript(id) {
   const t = await (await api('/api/transcripts/' + id)).json();
-  activeId = id; title = t.title.replace(/\.[^.]+$/, '');
-  clearOutput(); t.segments.forEach(addSeg); enableExports();
-  $('status').textContent = 'Saved transcript: ' + t.title;
-  loadHistory();
+  title = t.title.replace(/\.[^.]+$/, '');
+  reset(); t.segments.forEach(addSeg); showResult();
+  $('status').textContent = t.title;
+  window.scrollTo({ top: 0, behavior: 'smooth' });
 }
-function clearOutput() { segs = []; $('out').textContent = ''; ['copy','dltxt','dlsrt'].forEach(i => $(i).disabled = true); }
-function enableExports() { if (segs.length) ['copy','dltxt','dlsrt'].forEach(i => $(i).disabled = false); }
 
-// ---------- upload ----------
-function pick(f) {
-  file = f || null;
-  $('fname').textContent = f ? f.name + ' (' + (f.size / 1048576).toFixed(1) + ' MB)' : '';
-  $('go').disabled = !f;
-}
-$('drop').onclick = () => $('file').click();
-$('file').onchange = e => pick(e.target.files[0]);
-$('drop').ondragover = e => { e.preventDefault(); $('drop').classList.add('over'); };
-$('drop').ondragleave = () => $('drop').classList.remove('over');
-$('drop').ondrop = e => { e.preventDefault(); $('drop').classList.remove('over'); pick(e.dataTransfer.files[0]); };
-
+// ---------- result ----------
+function reset() { segs = []; $('out').textContent = ''; $('out').hidden = true; $('exports').hidden = true; }
+function showResult() { $('out').hidden = !segs.length; $('exports').hidden = !segs.length; }
 const fmt = (t, comma) => {
   const h = Math.floor(t / 3600), m = Math.floor(t % 3600 / 60), s = Math.floor(t % 60), ms = Math.floor((t % 1) * 1000);
   const p = (n, l = 2) => String(n).padStart(l, '0');
@@ -193,28 +185,38 @@ function save(name, data) {
   a.href = URL.createObjectURL(new Blob([data], { type: 'text/plain;charset=utf-8' }));
   a.download = name; a.click(); URL.revokeObjectURL(a.href);
 }
-$('copy').onclick = () => navigator.clipboard.writeText(text());
+$('copy').onclick = async () => { await navigator.clipboard.writeText(text()); $('copy').textContent = 'Copied'; setTimeout(() => $('copy').textContent = 'Copy text', 1500); };
 $('dltxt').onclick = () => save(title + '.txt', text());
 $('dlsrt').onclick = () => save(title + '.srt', srt());
 $('stop').onclick = () => ctrl && ctrl.abort();
-
 function addSeg(s) {
   segs.push(s);
-  const line = document.createElement('div');
-  const ts = document.createElement('span');
+  const line = document.createElement('div'), ts = document.createElement('span');
   ts.className = 'ts'; ts.textContent = fmt(s.start);
   line.append(ts, document.createTextNode(s.text));
   $('out').append(line);
 }
 
+// ---------- upload ----------
+function pick(f) {
+  file = f || null;
+  $('fname').textContent = f ? f.name + ' (' + (f.size / 1048576).toFixed(1) + ' MB)' : 'Any format, any length';
+  $('go').disabled = !f;
+}
+$('drop').onclick = () => $('file').click();
+$('file').onchange = e => pick(e.target.files[0]);
+$('drop').ondragover = e => { e.preventDefault(); $('drop').classList.add('over'); };
+$('drop').ondragleave = () => $('drop').classList.remove('over');
+$('drop').ondrop = e => { e.preventDefault(); $('drop').classList.remove('over'); pick(e.dataTransfer.files[0]); };
+
 $('go').onclick = async () => {
-  clearOutput(); activeId = null; title = file.name.replace(/\.[^.]+$/, '');
-  $('bar').hidden = false; $('bar').value = 0;
-  $('go').disabled = true; $('stop').disabled = false;
-  $('status').textContent = 'Uploading...';
+  reset(); title = file.name.replace(/\.[^.]+$/, '');
+  $('bar').hidden = false; $('bar').value = 0; $('out').hidden = false;
+  $('go').disabled = true; $('stop').disabled = false; $('status').textContent = 'Uploading...';
   ctrl = new AbortController();
-  const fd = new FormData();
-  fd.append('file', file); fd.append('language', $('lang').value); fd.append('hinglish', $('lang').value === 'hi');
+  const fd = new FormData(), lang = $('lang').value;
+  fd.append('file', file); fd.append('language', lang); fd.append('hinglish', lang === 'hi');
+  fd.append('denoise', $('denoise').checked); fd.append('clean', $('clean').checked);
   try {
     const res = await api('/transcribe', { method: 'POST', body: fd, signal: ctrl.signal });
     if (!res.ok) throw new Error('Server returned ' + res.status);
@@ -230,19 +232,16 @@ $('go').onclick = async () => {
         if (!line) continue;
         const ev = JSON.parse(line);
         if (ev.type === 'status') $('status').textContent = ev.message;
-        else if (ev.type === 'segment') addSeg(ev);
+        else if (ev.type === 'segment') { addSeg(ev); $('exports').hidden = false; }
         else if (ev.type === 'progress') $('bar').value = ev.pct;
         else if (ev.type === 'error') $('status').textContent = 'Error: ' + ev.message;
-        else if (ev.type === 'done') {
-          $('bar').value = 100; $('status').textContent = 'Done. Saved to history.';
-          activeId = ev.id || null; loadHistory();
-        }
+        else if (ev.type === 'done') { $('bar').value = 100; $('status').textContent = segs.length ? 'Done. Saved to history.' : 'No speech found.'; loadHistory(); }
       }
     }
   } catch (e) {
-    $('status').textContent = e.name === 'AbortError' ? 'Stopped (partial text is not saved).' : 'Failed: ' + e.message;
+    $('status').textContent = e.name === 'AbortError' ? 'Stopped. Partial text is not saved.' : 'Failed: ' + e.message;
   }
-  $('go').disabled = !file; $('stop').disabled = true; enableExports();
+  $('go').disabled = !file; $('stop').disabled = true; showResult();
 };
 
 // ---------- start ----------
