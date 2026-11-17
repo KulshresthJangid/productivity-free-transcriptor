@@ -38,15 +38,21 @@ def set_session(response, user_id: str):
                         samesite="lax", secure=SECURE_COOKIE)
 
 
-async def current_user(request: Request):
-    token = request.cookies.get(COOKIE)
+async def user_from_token(token, db):
+    """Session cookie value -> user document, or None. Works for HTTP and WebSocket."""
     if not token:
-        raise HTTPException(401, "Not logged in")
+        return None
     try:
         uid = jwt.decode(token, SECRET, algorithms=["HS256"])["sub"]
-        user = await request.app.state.db.users.find_one({"_id": ObjectId(uid)})
+        return await db.users.find_one({"_id": ObjectId(uid)})
     except Exception:
-        user = None
+        return None
+
+
+async def current_user(request: Request):
+    if not request.cookies.get(COOKIE):
+        raise HTTPException(401, "Not logged in")
+    user = await user_from_token(request.cookies.get(COOKIE), request.app.state.db)
     if not user:
         raise HTTPException(401, "Session expired")
     return user

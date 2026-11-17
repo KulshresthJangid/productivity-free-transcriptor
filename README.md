@@ -50,13 +50,19 @@ uvicorn app:app --port 8000
 |---|---|---|
 | POST | `/api/register`, `/api/login` | JSON `{email, password}`, sets session cookie |
 | POST | `/api/logout`, GET `/api/me` | |
-| POST | `/transcribe` | multipart `file`, `language`, `hinglish`; streams NDJSON events |
 | POST | `/upload/init` | JSON `{filename, size}`; returns `{id, chunk_size, chunks}` (chunked upload, used by the page) |
 | PUT | `/upload/{id}/{n}` | raw bytes of piece `n` (20 MB); retry-safe |
-| POST | `/transcribe/{id}` | form `language`, `hinglish`, ...; reassembled file, streams NDJSON events |
+| POST | `/transcribe/{id}` | JSON `{language, hinglish, denoise, clean, parallel}`; queues the job, returns `{job_id}` |
 | DELETE | `/upload/{id}` | cancel and delete an upload |
+| GET | `/api/jobs/active` | your queued/running job, if any (the page resumes it after a reload) |
+| DELETE | `/api/jobs/{id}` | cancel a queued or running job |
+| WS | `/ws/jobs/{id}?after=N` | live events (queue position, progress, text); reconnect with the last `seq` |
 | GET | `/api/transcripts`, `/api/transcripts/{id}` | your history only |
 | DELETE | `/api/transcripts/{id}` | |
+
+## How jobs run
+
+`app` (web) only handles login, uploads and the queue. `worker` takes one job at a time from a RabbitMQ queue (`scripts/setup-rabbitmq.sh` creates its vhost and user), runs it in a container capped at `WORKER_CPUS` cores and low priority, and writes progress and text to MongoDB. The page follows the job over a WebSocket, so a closed tab or dropped connection never loses work: reload and it resumes. Limits: `MAX_ACTIVE_PER_USER` (2) and `MAX_QUEUE` (20). A job interrupted by a restart is retried once.
 
 ## Large files
 

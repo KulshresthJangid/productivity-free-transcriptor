@@ -48,7 +48,7 @@ def get_model(workers=1):
         if workers in _models:
             return _models[workers]
         from faster_whisper import WhisperModel
-        threads = max(1, (os.cpu_count() or 2) // workers)
+        threads = max(1, int(os.getenv("CPU_THREADS", os.cpu_count() or 2)) // workers)
 
         def build(dev, comp):
             kw = dict(device=dev, compute_type=comp, num_workers=workers,

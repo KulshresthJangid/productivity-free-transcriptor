@@ -163,7 +163,7 @@ $('authform').onsubmit = async e => {
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) { $('autherr').textContent = typeof data.detail === 'string' ? data.detail : 'Enter a valid email and a password of 8+ characters.'; return; }
-  $('password').value = ''; showApp(data);
+  $('password').value = ''; showApp(data); resumeActive();
 };
 $('logout').onclick = async () => { await fetch('api/logout', { method: 'POST' }); location.reload(); };
 
@@ -298,6 +298,92 @@ function sendChunk(uid, i, blob, onBytes, track) {
   });
 }
 
+// ---------- background job: progress arrives over a WebSocket ----------
+// The server keeps working whatever the browser does. If the socket drops we reconnect and
+// replay from the last event we saw; reloading the page resumes the active job.
+let jobId = null, jobEnded = true, lastSeq = 0, sock = null;
+
+function endUi(msg) {
+  if (msg) $('status').textContent = msg;
+  $('go').disabled = !file; $('stop').disabled = true; $('parts').hidden = true; showResult();
+  ctrl = null;
+}
+function endJob(msg) {
+  if (jobEnded) return;
+  jobEnded = true;
+  if (sock) { sock.onclose = null; sock.close(); sock = null; }
+  endUi(msg);
+}
+async function cancelJob() {
+  const id = jobId;
+  endJob('Stopped. Nothing was saved.');
+  try { await fetch('api/jobs/' + id, { method: 'DELETE', credentials: 'same-origin' }); } catch (_) {}
+}
+function onJobEvent(ev) {
+  if (ev.type === 'ping') return;
+  if (ev.type === 'queue') {
+    phase = 'Queued';
+    $('status').textContent = ev.ahead ? 'Queued: ' + ev.ahead + ' file' + (ev.ahead > 1 ? 's' : '') + ' ahead of yours...' : 'Starting...';
+    return;
+  }
+  if (ev.type === 'reset') { reset(); $('out').hidden = false; return; }   // job restarted on the server
+  if (ev.type === 'end') { endJob(); return; }
+  handle(ev);
+  if (ev.type === 'done' || ev.type === 'error') endJob();
+}
+function watchJob(id) {
+  jobId = id; jobEnded = false; lastSeq = 0;
+  ctrl = { abort: cancelJob };
+  $('stop').disabled = false; $('go').disabled = true;
+  let tries = 0;
+  const open = () => {
+    const u = new URL('ws/jobs/' + id + '?after=' + lastSeq, location.href);
+    u.protocol = u.protocol === 'https:' ? 'wss:' : 'ws:';
+    sock = new WebSocket(u);
+    sock.onopen = () => { tries = 0; };
+    sock.onmessage = m => { const ev = JSON.parse(m.data); if (ev.seq) lastSeq = ev.seq; onJobEvent(ev); };
+    sock.onclose = e => {
+      if (jobEnded) return;
+      if (e.code === 4401) { showAuth(); return endJob('Please log in again.'); }
+      if (e.code === 4404) return endJob('That job no longer exists.');
+      if (++tries > 10) return endJob('Lost contact with the server. Reload the page: your job keeps running and will reappear.');
+      $('status').textContent = 'Connection interrupted. Reconnecting... (your file keeps processing)';
+      setTimeout(open, Math.min(1000 * tries, 8000));
+    };
+  };
+  open();
+}
+async function resumeActive() {
+  if (!jobEnded) return;
+  try {
+    const d = await (await fetch('api/jobs/active', { credentials: 'same-origin' })).json();
+    if (!d.job) return;
+    reset(); title = d.job.title.replace(/\.[^.]+$/, '');
+    $('bar').hidden = false; $('bar').value = 0; $('out').hidden = false;
+    $('parts').textContent = ''; $('parts').hidden = true;
+    phase = 'Processing'; $('status').textContent = 'Reconnecting to "' + d.job.title + '"...';
+    watchJob(d.job.id);
+  } catch (_) {}
+}
+
+// ---------- chunked upload ----------
+// Cloudflare rejects request bodies over 100 MB, so the file goes up in small pieces (the server
+// tells us the size), each retried on its own. Then one tiny request queues the job.
+function sendChunk(uid, i, blob, onBytes, track) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    track(xhr);
+    xhr.open('PUT', 'upload/' + uid + '/' + i);
+    xhr.upload.onprogress = e => onBytes(e.loaded);
+    xhr.onload = () => xhr.status < 300 ? resolve()
+      : reject(Object.assign(new Error('server returned ' + xhr.status), { status: xhr.status }));
+    xhr.onerror = () => reject(new Error('connection lost'));
+    xhr.onabort = () => reject(Object.assign(new Error('stopped'), { aborted: true }));
+    xhr.send(blob);
+  });
+}
+const detail = async r => { const d = await r.json().catch(() => ({})); return typeof d.detail === 'string' ? d.detail : 'server returned ' + r.status; };
+
 $('go').onclick = async () => {
   reset(); title = file.name.replace(/\.[^.]+$/, '');
   $('bar').hidden = false; $('bar').value = 0; $('out').hidden = false;
@@ -305,24 +391,17 @@ $('go').onclick = async () => {
   $('go').disabled = true; $('stop').disabled = false;
   phase = 'Uploading'; $('status').textContent = 'Uploading 0%';
 
-  let uid = null, cur = null, stopped = false, ended = false, streaming = false;
-  const finish = msg => {
-    if (ended) return; ended = true;
-    if (msg) $('status').textContent = msg;
-    $('go').disabled = !file; $('stop').disabled = true; $('parts').hidden = true; showResult();
-  };
+  let uid = null, cur = null, stopped = false, done = false;
+  const stop = msg => { if (!done) { done = true; endUi(msg); } };
   ctrl = { abort: () => {
     stopped = true; if (cur) cur.abort();
-    if (uid && !streaming) fetch('upload/' + uid, { method: 'DELETE', credentials: 'same-origin' }).catch(() => {});
+    if (uid) fetch('upload/' + uid, { method: 'DELETE', credentials: 'same-origin' }).catch(() => {});
   } };
 
   try {
     const initRes = await api('upload/init', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ filename: file.name, size: file.size }) });
-    if (!initRes.ok) {
-      const d = await initRes.json().catch(() => ({}));
-      return finish('Failed: ' + (typeof d.detail === 'string' ? d.detail : 'server returned ' + initRes.status));
-    }
+    if (!initRes.ok) return stop('Failed: ' + await detail(initRes));
     const init = await initRes.json(); uid = init.id;
 
     for (let i = 0; i < init.chunks; i++) {
@@ -332,56 +411,33 @@ $('go').onclick = async () => {
           await sendChunk(uid, i, blob, loaded => setProgress((start + loaded) / file.size * 100), x => { cur = x; });
           break;
         } catch (e) {
-          if (e.aborted || stopped) return finish('Stopped. Nothing was saved.');
-          if (e.status === 401) { showAuth(); return finish('Please log in again.'); }
-          if (e.status === 404 || e.status === 413 || attempt >= 4) return finish('Failed: ' + e.message + ' (piece ' + (i + 1) + ' of ' + init.chunks + ')');
+          if (e.aborted || stopped) return stop('Stopped. Nothing was saved.');
+          if (e.status === 401) { showAuth(); return stop('Please log in again.'); }
+          if (e.status === 404 || e.status === 413 || attempt >= 4) return stop('Failed: ' + e.message + ' (piece ' + (i + 1) + ' of ' + init.chunks + ')');
           $('status').textContent = 'Retrying piece ' + (i + 1) + ' of ' + init.chunks + '...';
           await new Promise(r => setTimeout(r, 1000 * attempt));
         }
       }
     }
-    if (stopped) return finish('Stopped. Nothing was saved.');
+    if (stopped) return stop('Stopped. Nothing was saved.');
 
-    streaming = true; phase = 'Processing'; $('bar').value = 0; $('status').textContent = 'Processing...';
-    const fd = new FormData(), lang = $('lang').value;
-    fd.append('language', lang); fd.append('hinglish', lang === 'hi');
-    fd.append('denoise', $('denoise').checked); fd.append('clean', $('clean').checked); fd.append('parallel', turbo);
-
-    // XHR (not fetch) so partial NDJSON lines can be handled as they stream in.
-    const xhr = new XMLHttpRequest();
-    cur = xhr;
-    let seen = 0, buf = '';
-    xhr.open('POST', 'transcribe/' + uid);
-    xhr.onprogress = () => {
-      buf += xhr.responseText.slice(seen); seen = xhr.responseText.length;
-      let nl;
-      while ((nl = buf.indexOf('\n')) >= 0) {
-        const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1);
-        if (line) handle(JSON.parse(line));
-      }
-    };
-    xhr.onload = () => {
-      if (xhr.status === 401) { showAuth(); return finish('Please log in again.'); }
-      if (xhr.status >= 400) {
-        let m = 'server returned ' + xhr.status;
-        try { const d = JSON.parse(xhr.responseText); if (typeof d.detail === 'string') m = d.detail; } catch (_) {}
-        return finish('Failed: ' + m);
-      }
-      xhr.onprogress();   // flush anything left
-      finish();
-    };
-    xhr.onerror = () => finish('Failed: connection lost.');
-    xhr.onabort = () => finish('Stopped. Partial text is not saved.');
-    xhr.send(fd);
+    phase = 'Queued'; $('bar').value = 0; $('status').textContent = 'Queuing...';
+    const lang = $('lang').value;
+    const r = await api('transcribe/' + uid, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ language: lang, hinglish: lang === 'hi', denoise: $('denoise').checked,
+                             clean: $('clean').checked, parallel: turbo }) });
+    if (!r.ok) return stop('Failed: ' + await detail(r));
+    done = true;                       // upload phase finished; the job takes over the UI
+    watchJob((await r.json()).job_id);
   } catch (e) {
-    finish('Failed: ' + e.message);
+    stop('Failed: ' + e.message);
   }
 };
 
 // ---------- start ----------
 (async () => {
   const res = await fetch('api/me', { credentials: 'same-origin' });
-  if (res.ok) showApp(await res.json()); else showAuth();
+  if (res.ok) { showApp(await res.json()); resumeActive(); } else showAuth();
 })();
 </script>
 </body>
