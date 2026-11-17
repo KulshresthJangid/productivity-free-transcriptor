@@ -42,6 +42,8 @@
   #out { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px 16px; margin-top:12px; line-height:1.7; }
   #out .ts { color:var(--muted); font-size:.75rem; margin-right:8px; font-variant-numeric:tabular-nums; }
   #out div { margin-bottom:4px; }
+  #parts { display:grid; grid-template-columns:repeat(auto-fill,minmax(130px,1fr)); gap:6px 12px; margin-top:10px; font-size:.8rem; color:var(--muted); }
+  #parts progress { height:6px; margin:0; }
   .exports { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-top:12px; }
 
   button.turbo { width:100%; margin-top:12px; background:none; border:2px solid var(--err); color:var(--err); font-weight:700; }
@@ -116,6 +118,7 @@
   </dialog>
 
   <progress id="bar" value="0" max="100" hidden></progress>
+  <div id="parts" hidden></div>
   <div id="status"></div>
   <div id="out" hidden></div>
   <div class="exports" id="exports" hidden>
@@ -247,39 +250,77 @@ $('drop').ondragover = e => { e.preventDefault(); $('drop').classList.add('over'
 $('drop').ondragleave = () => $('drop').classList.remove('over');
 $('drop').ondrop = e => { e.preventDefault(); $('drop').classList.remove('over'); pick(e.dataTransfer.files[0]); };
 
-$('go').onclick = async () => {
+let phase = '';
+function setProgress(pct) {
+  $('bar').value = pct;
+  $('status').textContent = phase + ' ' + Math.round(pct) + '%';
+}
+function renderParts(pcts) {
+  const box = $('parts');
+  box.hidden = false;
+  while (box.children.length < pcts.length) {
+    const el = document.createElement('div'); el.className = 'part';
+    el.innerHTML = '<span></span><progress max="100"></progress>';
+    box.append(el);
+  }
+  pcts.forEach((p, i) => {
+    box.children[i].firstChild.textContent = 'Part ' + (i + 1);
+    box.children[i].lastChild.value = p;
+  });
+}
+function handle(ev) {
+  if (ev.type === 'status') { phase = ev.message.replace(/\.+$/, ''); $('status').textContent = ev.message; }
+  else if (ev.type === 'segment') { addSeg(ev); $('exports').hidden = false; }
+  else if (ev.type === 'progress') setProgress(ev.pct);
+  else if (ev.type === 'parts') renderParts(ev.pcts);
+  else if (ev.type === 'error') $('status').textContent = 'Error: ' + ev.message;
+  else if (ev.type === 'done') {
+    $('bar').value = 100; $('parts').hidden = true;
+    $('status').textContent = segs.length ? 'Done. Saved to history.' : 'No speech found.';
+    loadHistory();
+  }
+}
+
+$('go').onclick = () => {
   reset(); title = file.name.replace(/\.[^.]+$/, '');
   $('bar').hidden = false; $('bar').value = 0; $('out').hidden = false;
-  $('go').disabled = true; $('stop').disabled = false; $('status').textContent = 'Uploading...';
-  ctrl = new AbortController();
+  $('parts').textContent = ''; $('parts').hidden = true;
+  $('go').disabled = true; $('stop').disabled = false;
+  phase = 'Uploading'; $('status').textContent = 'Uploading 0%';
+
   const fd = new FormData(), lang = $('lang').value;
   fd.append('file', file); fd.append('language', lang); fd.append('hinglish', lang === 'hi');
   fd.append('denoise', $('denoise').checked); fd.append('clean', $('clean').checked); fd.append('parallel', turbo);
-  try {
-    const res = await api('/transcribe', { method: 'POST', body: fd, signal: ctrl.signal });
-    if (!res.ok) throw new Error('Server returned ' + res.status);
-    const reader = res.body.getReader(), dec = new TextDecoder();
-    let buf = '';
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buf += dec.decode(value, { stream: true });
-      let nl;
-      while ((nl = buf.indexOf('\n')) >= 0) {
-        const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1);
-        if (!line) continue;
-        const ev = JSON.parse(line);
-        if (ev.type === 'status') $('status').textContent = ev.message;
-        else if (ev.type === 'segment') { addSeg(ev); $('exports').hidden = false; }
-        else if (ev.type === 'progress') $('bar').value = ev.pct;
-        else if (ev.type === 'error') $('status').textContent = 'Error: ' + ev.message;
-        else if (ev.type === 'done') { $('bar').value = 100; $('status').textContent = segs.length ? 'Done. Saved to history.' : 'No speech found.'; loadHistory(); }
-      }
+
+  // XHR (not fetch) so we get live upload progress as well as the streamed results.
+  const xhr = new XMLHttpRequest();
+  ctrl = { abort: () => xhr.abort() };
+  let seen = 0, buf = '', ended = false;
+  const finish = msg => {
+    if (ended) return; ended = true;
+    if (msg) $('status').textContent = msg;
+    $('go').disabled = !file; $('stop').disabled = true; $('parts').hidden = true; showResult();
+  };
+  xhr.open('POST', '/transcribe');
+  xhr.upload.onprogress = e => { if (e.lengthComputable) setProgress(e.loaded / e.total * 100); };
+  xhr.upload.onload = () => { phase = 'Processing'; $('bar').value = 0; $('status').textContent = 'Processing...'; };
+  xhr.onprogress = () => {
+    buf += xhr.responseText.slice(seen); seen = xhr.responseText.length;
+    let nl;
+    while ((nl = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1);
+      if (line) handle(JSON.parse(line));
     }
-  } catch (e) {
-    $('status').textContent = e.name === 'AbortError' ? 'Stopped. Partial text is not saved.' : 'Failed: ' + e.message;
-  }
-  $('go').disabled = !file; $('stop').disabled = true; showResult();
+  };
+  xhr.onload = () => {
+    if (xhr.status === 401) { showAuth(); return finish('Please log in again.'); }
+    if (xhr.status >= 400) return finish('Failed: server returned ' + xhr.status);
+    xhr.onprogress();   // flush anything left
+    finish();
+  };
+  xhr.onerror = () => finish('Failed: connection lost.');
+  xhr.onabort = () => finish('Stopped. Partial text is not saved.');
+  xhr.send(fd);
 };
 
 // ---------- start ----------

@@ -89,14 +89,37 @@ def _run(cmd):
     return subprocess.run(cmd, capture_output=True, text=True, errors="replace")
 
 
+def probe_duration(src: Path):
+    r = _run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
+              "-of", "default=nw=1:nk=1", str(src)])
+    try:
+        return float(r.stdout.strip())
+    except ValueError:
+        return None
+
+
 def decode_to_wav(src: Path, dst: Path, denoise=True):
-    """Any audio/video container -> 16 kHz mono PCM wav (optionally noise-reduced)."""
+    """Any audio/video container -> 16 kHz mono PCM wav (optionally noise-reduced).
+    Generator: yields percent done (0-100) while ffmpeg works."""
+    total = probe_duration(src)
     cmd = ["ffmpeg", "-nostdin", "-y", "-i", str(src), "-vn", "-map", "0:a:0?", "-ac", "1"]
     if denoise:
         # cut rumble and hiss outside the speech band, then spectral noise reduction
         cmd += ["-af", "highpass=f=80,lowpass=f=7500,afftdn=nf=-25"]
-    r = _run(cmd + ["-ar", str(SR), "-c:a", "pcm_s16le", str(dst)])
-    if r.returncode != 0 or not dst.exists() or dst.stat().st_size < 100:
+    cmd += ["-ar", str(SR), "-c:a", "pcm_s16le", "-progress", "pipe:1", "-nostats", str(dst)]
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    try:
+        for line in proc.stdout:
+            if total and line.startswith("out_time_us="):
+                try:
+                    yield min(99.0, int(line.split("=")[1]) / 1e6 / total * 100)
+                except ValueError:
+                    pass
+        proc.wait()
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+    if proc.returncode != 0 or not dst.exists() or dst.stat().st_size < 100:
         raise ValueError("Could not read audio from this file (no audio track or unsupported format).")
 
 
@@ -164,7 +187,8 @@ def transcribe_stream(src: Path, workdir: Path, language="hi", hinglish=True,
     with _job_lock:
         wav = workdir / "audio.wav"
         yield {"type": "status", "message": "Reading audio..."}
-        decode_to_wav(src, wav, denoise)
+        for pct in decode_to_wav(src, wav, denoise):
+            yield {"type": "progress", "pct": pct}
         src.unlink(missing_ok=True)  # original upload no longer needed
 
         with wave.open(str(wav), "rb") as w:
@@ -192,18 +216,52 @@ def transcribe_stream(src: Path, workdir: Path, language="hi", hinglish=True,
                 context = " ".join(texts)[-200:]
         else:
             yield {"type": "status", "message": f"TURBO: {workers} parts at once..."}
+            import queue
             from concurrent.futures import ThreadPoolExecutor
+            n = len(chunks)
+            q = queue.Queue()
+            bufs, done, pcts = [[] for _ in chunks], [False] * n, [0.0] * n
+            lens = [t1 - t0 for t0, t1 in chunks]
+
+            def work(i, t0, t1):
+                try:
+                    # Parts are independent here (no text carried between them).
+                    for ev in _transcribe_chunk(model, wav, t0, t1, lang, hinglish, clean, "",
+                                                cleanup.RepeatFilter()):
+                        q.put(("seg", i, ev))
+                    q.put(("done", i, None))
+                except Exception as e:  # surface in the main loop
+                    q.put(("err", i, e))
+
             pool = ThreadPoolExecutor(max_workers=workers)
             try:
-                # Parts are independent here (no text carried between them), each with its own repeat filter.
-                futures = [pool.submit(lambda t0=t0, t1=t1: list(_transcribe_chunk(
-                    model, wav, t0, t1, lang, hinglish, clean, "", cleanup.RepeatFilter())))
-                    for t0, t1 in chunks]
-                for idx, fut in enumerate(futures):   # emit in order so the text reads correctly
-                    for ev in fut.result():
-                        yield ev
-                    yield {"type": "progress", "pct": min(99.0, (idx + 1) / len(chunks) * 100)}
-                    yield {"type": "status", "message": f"TURBO: {idx + 1} of {len(chunks)} parts done..."}
+                for i, (t0, t1) in enumerate(chunks):
+                    pool.submit(work, i, t0, t1)
+                head = 0
+                while head < n:
+                    try:
+                        kind, i, x = q.get(timeout=1)
+                    except queue.Empty:
+                        yield {"type": "ping"}   # also lets us notice a closed connection
+                        continue
+                    if kind == "err":
+                        raise x
+                    if kind == "seg":
+                        bufs[i].append(x)
+                        pcts[i] = min(1.0, (x["end"] - chunks[i][0]) / lens[i])
+                    else:
+                        done[i], pcts[i] = True, 1.0
+                    # text is shown in order: stream the earliest unfinished part live
+                    while head < n:
+                        for ev in bufs[head]:
+                            yield ev
+                        bufs[head].clear()
+                        if done[head]:
+                            head += 1
+                        else:
+                            break
+                    yield {"type": "progress", "pct": min(99.0, sum(p * l for p, l in zip(pcts, lens)) / duration * 100)}
+                    yield {"type": "parts", "pcts": [round(p * 100) for p in pcts]}
             finally:
                 pool.shutdown(wait=False, cancel_futures=True)
         yield {"type": "done"}
