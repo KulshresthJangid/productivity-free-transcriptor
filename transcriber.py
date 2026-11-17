@@ -24,6 +24,7 @@ COMPUTE = os.getenv("WHISPER_COMPUTE", "auto")          # auto: float16 on GPU, 
 # Models are saved here once and reused on every start (mount it as a volume in Docker).
 MODEL_DIR = os.getenv("MODEL_DIR", str(Path(__file__).parent / "models"))
 CHUNK_SECONDS = int(os.getenv("CHUNK_SECONDS", "600"))  # target chunk length
+BEAM_SIZE = int(os.getenv("WHISPER_BEAM", "5"))          # 1 = greedy: roughly 2-3x faster, slightly less accurate
 TMP_PREFIX = "hinglish-tx-"
 SR = 16000
 
@@ -168,7 +169,7 @@ def _transcribe_chunk(model, wav, t0, t1, lang, hinglish, clean, context, repeat
     else:
         prompt = context or None
     segs, _ = model.transcribe(
-        audio, language=lang, task="transcribe", beam_size=5,
+        audio, language=lang, task="transcribe", beam_size=BEAM_SIZE,
         initial_prompt=prompt, vad_filter=True,
         vad_parameters={"min_silence_duration_ms": 500},
         condition_on_previous_text=False,

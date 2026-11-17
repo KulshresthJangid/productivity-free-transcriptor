@@ -17,6 +17,7 @@ x-common: &common
     WHISPER_MODEL: ${WHISPER_MODEL:-large-v3}
     WHISPER_DEVICE: ${WHISPER_DEVICE:-auto}
     MAX_PARALLEL: ${MAX_PARALLEL:-2}
+    WHISPER_BEAM: ${WHISPER_BEAM:-5}
     MODEL_DIR: /models
     HF_HOME: /models/hf        # keep all Hugging Face files on the big disk too
     TMPDIR: /data/tmp          # uploads, job files and temp audio go to the big disk

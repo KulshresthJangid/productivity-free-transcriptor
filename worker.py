@@ -35,40 +35,56 @@ class Cancelled(Exception):
 
 
 class Emitter:
-    """Buffers events and writes them to Mongo about once a second (progress is coalesced)."""
+    """Buffers events and writes them to Mongo every second from a background thread, so
+    output never waits for the next event (Whisper can be silent for minutes between
+    segments). Progress is coalesced to its latest value."""
 
     def __init__(self, db, oid):
         self.db, self.oid = db, oid
         last = db.job_events.find_one({"job_id": oid}, sort=[("seq", -1)])
         self.seq = last["seq"] if last else 0
-        self.pending, self.last_flush = [], time.time()
+        self.pending, self.cancelled = [], False
+        self.lock, self._stop = threading.Lock(), threading.Event()
+        threading.Thread(target=self._loop, daemon=True).start()
+
+    def _loop(self):
+        while not self._stop.wait(1.0):
+            try:
+                self.flush(check_cancel=True)
+            except Exception:
+                traceback.print_exc()
 
     def add(self, ev):
-        if ev["type"] in ("progress", "parts"):   # only the latest value matters
-            self.pending = [p for p in self.pending if p["type"] != ev["type"]]
-        self.pending.append(ev)
+        self.check()
+        with self.lock:
+            if ev["type"] in ("progress", "parts"):   # only the latest value matters
+                self.pending = [p for p in self.pending if p["type"] != ev["type"]]
+            self.pending.append(ev)
         if ev["type"] in ("done", "error"):
             self.flush(check_cancel=False)
-        else:
-            self.tick()
 
-    def tick(self):
-        if time.time() - self.last_flush >= 1.0:
-            self.flush()
+    def check(self):
+        """Called from the job thread; raises if the user cancelled."""
+        if self.cancelled:
+            raise Cancelled()
 
     def flush(self, check_cancel=True):
-        if self.pending:
-            docs = []
-            for ev in self.pending:
-                self.seq += 1
-                docs.append({"job_id": self.oid, "seq": self.seq, "ev": ev})
-            self.db.job_events.insert_many(docs)
-            self.pending = []
-        self.last_flush = time.time()
+        with self.lock:
+            if self.pending:
+                docs = []
+                for ev in self.pending:
+                    self.seq += 1
+                    docs.append({"job_id": self.oid, "seq": self.seq, "ev": ev})
+                self.db.job_events.insert_many(docs)
+                self.pending = []
         if check_cancel:
             j = self.db.jobs.find_one({"_id": self.oid}, {"status": 1})
             if not j or j["status"] == "cancelled":
-                raise Cancelled()
+                self.cancelled = True
+
+    def close(self):
+        self._stop.set()
+        self.flush(check_cancel=False)
 
 
 def run_job(db, job_id):
@@ -90,7 +106,7 @@ def run_job(db, job_id):
         for ev in transcriber.transcribe_stream(src, jobdir, o["language"], o["hinglish"],
                                                 o["denoise"], o["clean"], o["parallel"]):
             if ev["type"] == "ping":
-                em.tick()
+                em.check()
                 continue
             if ev["type"] == "segment":
                 segments.append({"start": ev["start"], "end": ev["end"], "text": ev["text"]})
@@ -110,7 +126,7 @@ def run_job(db, job_id):
         em.add({"type": "error", "message": str(e) or e.__class__.__name__})
     finally:
         try:
-            em.flush(check_cancel=False)
+            em.close()
         except Exception:
             traceback.print_exc()
         db.jobs.update_one({"_id": oid}, {"$set": {"status": final, "finished_at": now()}})
