@@ -2,7 +2,6 @@
 # Deploys the transcriptor so that everything big lives on the large data disk,
 # never on the system SSD:
 #   $DATA_DIR/models  - Whisper model (downloaded once)
-#   $DATA_DIR/mongo   - MongoDB data (users, transcript text)
 #   $DATA_DIR/tmp     - uploads and temporary audio while a file is being processed
 #
 # Usage:   DATA_DIR=/mnt/data1tb ./deploy.sh
@@ -30,12 +29,10 @@ if [ "${ALLOW_SYSTEM_DISK:-0}" != "1" ]; then
 fi
 AVAIL_GB=$(df -BG --output=avail "$DATA_DIR" | tail -n1 | tr -dc '0-9')
 [ "$AVAIL_GB" -ge 20 ] || { echo "ERROR: only ${AVAIL_GB} GB free on $DATA_DIR (need at least 20)."; exit 1; }
-echo "Using $DATA_DIR (${AVAIL_GB} GB free) for models, database and temp files."
+echo "Using $DATA_DIR (${AVAIL_GB} GB free) for models and temp files."
 
 # --- folders ---
-mkdir -p "$DATA_DIR/models" "$DATA_DIR/mongo" "$DATA_DIR/tmp"
-# The mongo image runs as uid 999; the app container runs as root.
-chown -R 999:999 "$DATA_DIR/mongo" 2>/dev/null || sudo chown -R 999:999 "$DATA_DIR/mongo"
+mkdir -p "$DATA_DIR/models" "$DATA_DIR/tmp"
 chmod 1777 "$DATA_DIR/tmp"
 
 # remember the choice for later `docker compose` commands

@@ -1,23 +1,13 @@
 services:
-  mongo:
-    image: mongo:7
-    restart: unless-stopped
-    environment:
-      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER}
-      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD}
-    volumes:
-      - ${DATA_DIR:?set DATA_DIR in .env (run ./deploy.sh)}/mongo:/data/db:z   # on the big disk
-    # not published to the host: only the app container can reach it
-
   app:
     build: .
     restart: unless-stopped
-    depends_on:
-      - mongo
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # reach the shared MongoDB container published on the host
     ports:
       - "127.0.0.1:8000:8000"   # nginx proxies /productivity/transcriptor/ here; not public
     environment:
-      MONGO_URI: mongodb://${MONGO_USER}:${MONGO_PASSWORD}@mongo:27017/?authSource=admin
+      MONGO_URI: ${MONGO_URI:?set MONGO_URI in .env (shared MongoDB on the host)}
       MONGO_DB: transcriptor
       JWT_SECRET: ${JWT_SECRET}
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
