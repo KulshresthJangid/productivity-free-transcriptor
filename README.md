@@ -51,8 +51,16 @@ uvicorn app:app --port 8000
 | POST | `/api/register`, `/api/login` | JSON `{email, password}`, sets session cookie |
 | POST | `/api/logout`, GET `/api/me` | |
 | POST | `/transcribe` | multipart `file`, `language`, `hinglish`; streams NDJSON events |
+| POST | `/upload/init` | JSON `{filename, size}`; returns `{id, chunk_size, chunks}` (chunked upload, used by the page) |
+| PUT | `/upload/{id}/{n}` | raw bytes of piece `n` (20 MB); retry-safe |
+| POST | `/transcribe/{id}` | form `language`, `hinglish`, ...; reassembled file, streams NDJSON events |
+| DELETE | `/upload/{id}` | cancel and delete an upload |
 | GET | `/api/transcripts`, `/api/transcripts/{id}` | your history only |
 | DELETE | `/api/transcripts/{id}` | |
+
+## Large files
+
+Cloudflare's free plan rejects request bodies over 100 MB, so the page uploads in 20 MB pieces and the server reassembles them (up to `MAX_UPLOAD_BYTES`, default 4 GB). Abandoned uploads are deleted after 6 hours.
 
 ## Deploying publicly
 

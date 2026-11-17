@@ -281,46 +281,101 @@ function handle(ev) {
   }
 }
 
-$('go').onclick = () => {
+// Chunked upload: Cloudflare rejects request bodies over 100 MB, so the file goes up in
+// small pieces (the server tells us the size), each retried on its own, then one tiny
+// request starts the transcription and streams the text back.
+function sendChunk(uid, i, blob, onBytes, track) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    track(xhr);
+    xhr.open('PUT', 'upload/' + uid + '/' + i);
+    xhr.upload.onprogress = e => onBytes(e.loaded);
+    xhr.onload = () => xhr.status < 300 ? resolve()
+      : reject(Object.assign(new Error('server returned ' + xhr.status), { status: xhr.status }));
+    xhr.onerror = () => reject(new Error('connection lost'));
+    xhr.onabort = () => reject(Object.assign(new Error('stopped'), { aborted: true }));
+    xhr.send(blob);
+  });
+}
+
+$('go').onclick = async () => {
   reset(); title = file.name.replace(/\.[^.]+$/, '');
   $('bar').hidden = false; $('bar').value = 0; $('out').hidden = false;
   $('parts').textContent = ''; $('parts').hidden = true;
   $('go').disabled = true; $('stop').disabled = false;
   phase = 'Uploading'; $('status').textContent = 'Uploading 0%';
 
-  const fd = new FormData(), lang = $('lang').value;
-  fd.append('file', file); fd.append('language', lang); fd.append('hinglish', lang === 'hi');
-  fd.append('denoise', $('denoise').checked); fd.append('clean', $('clean').checked); fd.append('parallel', turbo);
-
-  // XHR (not fetch) so we get live upload progress as well as the streamed results.
-  const xhr = new XMLHttpRequest();
-  ctrl = { abort: () => xhr.abort() };
-  let seen = 0, buf = '', ended = false;
+  let uid = null, cur = null, stopped = false, ended = false, streaming = false;
   const finish = msg => {
     if (ended) return; ended = true;
     if (msg) $('status').textContent = msg;
     $('go').disabled = !file; $('stop').disabled = true; $('parts').hidden = true; showResult();
   };
-  xhr.open('POST', 'transcribe');
-  xhr.upload.onprogress = e => { if (e.lengthComputable) setProgress(e.loaded / e.total * 100); };
-  xhr.upload.onload = () => { phase = 'Processing'; $('bar').value = 0; $('status').textContent = 'Processing...'; };
-  xhr.onprogress = () => {
-    buf += xhr.responseText.slice(seen); seen = xhr.responseText.length;
-    let nl;
-    while ((nl = buf.indexOf('\n')) >= 0) {
-      const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1);
-      if (line) handle(JSON.parse(line));
+  ctrl = { abort: () => {
+    stopped = true; if (cur) cur.abort();
+    if (uid && !streaming) fetch('upload/' + uid, { method: 'DELETE', credentials: 'same-origin' }).catch(() => {});
+  } };
+
+  try {
+    const initRes = await api('upload/init', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filename: file.name, size: file.size }) });
+    if (!initRes.ok) {
+      const d = await initRes.json().catch(() => ({}));
+      return finish('Failed: ' + (typeof d.detail === 'string' ? d.detail : 'server returned ' + initRes.status));
     }
-  };
-  xhr.onload = () => {
-    if (xhr.status === 401) { showAuth(); return finish('Please log in again.'); }
-    if (xhr.status >= 400) return finish('Failed: server returned ' + xhr.status);
-    xhr.onprogress();   // flush anything left
-    finish();
-  };
-  xhr.onerror = () => finish('Failed: connection lost.');
-  xhr.onabort = () => finish('Stopped. Partial text is not saved.');
-  xhr.send(fd);
+    const init = await initRes.json(); uid = init.id;
+
+    for (let i = 0; i < init.chunks; i++) {
+      const start = i * init.chunk_size, blob = file.slice(start, Math.min(start + init.chunk_size, file.size));
+      for (let attempt = 1; ; attempt++) {
+        try {
+          await sendChunk(uid, i, blob, loaded => setProgress((start + loaded) / file.size * 100), x => { cur = x; });
+          break;
+        } catch (e) {
+          if (e.aborted || stopped) return finish('Stopped. Nothing was saved.');
+          if (e.status === 401) { showAuth(); return finish('Please log in again.'); }
+          if (e.status === 404 || e.status === 413 || attempt >= 4) return finish('Failed: ' + e.message + ' (piece ' + (i + 1) + ' of ' + init.chunks + ')');
+          $('status').textContent = 'Retrying piece ' + (i + 1) + ' of ' + init.chunks + '...';
+          await new Promise(r => setTimeout(r, 1000 * attempt));
+        }
+      }
+    }
+    if (stopped) return finish('Stopped. Nothing was saved.');
+
+    streaming = true; phase = 'Processing'; $('bar').value = 0; $('status').textContent = 'Processing...';
+    const fd = new FormData(), lang = $('lang').value;
+    fd.append('language', lang); fd.append('hinglish', lang === 'hi');
+    fd.append('denoise', $('denoise').checked); fd.append('clean', $('clean').checked); fd.append('parallel', turbo);
+
+    // XHR (not fetch) so partial NDJSON lines can be handled as they stream in.
+    const xhr = new XMLHttpRequest();
+    cur = xhr;
+    let seen = 0, buf = '';
+    xhr.open('POST', 'transcribe/' + uid);
+    xhr.onprogress = () => {
+      buf += xhr.responseText.slice(seen); seen = xhr.responseText.length;
+      let nl;
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1);
+        if (line) handle(JSON.parse(line));
+      }
+    };
+    xhr.onload = () => {
+      if (xhr.status === 401) { showAuth(); return finish('Please log in again.'); }
+      if (xhr.status >= 400) {
+        let m = 'server returned ' + xhr.status;
+        try { const d = JSON.parse(xhr.responseText); if (typeof d.detail === 'string') m = d.detail; } catch (_) {}
+        return finish('Failed: ' + m);
+      }
+      xhr.onprogress();   // flush anything left
+      finish();
+    };
+    xhr.onerror = () => finish('Failed: connection lost.');
+    xhr.onabort = () => finish('Stopped. Partial text is not saved.');
+    xhr.send(fd);
+  } catch (e) {
+    finish('Failed: ' + e.message);
+  }
 };
 
 // ---------- start ----------
