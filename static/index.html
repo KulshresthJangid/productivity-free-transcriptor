@@ -44,6 +44,15 @@
   #out div { margin-bottom:4px; }
   .exports { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-top:12px; }
 
+  button.turbo { width:100%; margin-top:12px; background:none; border:2px solid var(--err); color:var(--err); font-weight:700; }
+  button.turbo.on { background:var(--err); color:#fff; }
+  dialog { max-width:440px; width:calc(100% - 32px); border:3px solid var(--err); border-radius:14px; background:var(--bg); color:var(--fg); padding:22px; }
+  dialog::backdrop { background:rgba(0,0,0,.6); }
+  dialog h2 { margin:0 0 10px; color:var(--err); font-size:1.2rem; }
+  dialog .btns { display:flex; gap:10px; margin-top:18px; }
+  dialog .btns button { flex:1; }
+  dialog button.danger { background:var(--err); border-color:var(--err); color:#fff; font-weight:700; }
+
   details { margin-top:28px; border-top:1px solid var(--line); padding-top:14px; }
   summary { cursor:pointer; font-weight:600; }
   .item { display:flex; justify-content:space-between; gap:8px; align-items:center; padding:10px 4px; border-bottom:1px solid var(--line); cursor:pointer; }
@@ -91,6 +100,20 @@
     <button id="go" class="primary" disabled>Transcribe</button>
     <button id="stop" disabled>Stop</button>
   </div>
+
+  <button id="turbo" class="turbo" type="button">&#9888; Turbo mode (parallel): OFF</button>
+
+  <dialog id="warn">
+    <h2>&#9888; DANGER: use only in an emergency</h2>
+    <p>Remember, <b id="warnuser"></b>: Turbo mode processes many parts of the file at the same time.
+      <b>It will consume the whole hardware of the server, which might crash or get rebooted</b>,
+      and it will slow down or break everyone else's work.</p>
+    <p>Use it only when you are in an urgency.</p>
+    <div class="btns">
+      <button id="warncancel" type="button">Cancel</button>
+      <button id="warnok" type="button" class="danger">I understand, enable</button>
+    </div>
+  </dialog>
 
   <progress id="bar" value="0" max="100" hidden></progress>
   <div id="status"></div>
@@ -197,6 +220,21 @@ function addSeg(s) {
   $('out').append(line);
 }
 
+// ---------- turbo (parallel) ----------
+let turbo = false;
+function setTurbo(on) {
+  turbo = on;
+  $('turbo').classList.toggle('on', on);
+  $('turbo').textContent = '⚠ Turbo mode (parallel): ' + (on ? 'ON' : 'OFF');
+}
+$('turbo').onclick = () => {
+  if (turbo) return setTurbo(false);
+  $('warnuser').textContent = $('who').textContent;
+  $('warn').showModal();
+};
+$('warncancel').onclick = () => $('warn').close();
+$('warnok').onclick = () => { $('warn').close(); setTurbo(true); };
+
 // ---------- upload ----------
 function pick(f) {
   file = f || null;
@@ -216,7 +254,7 @@ $('go').onclick = async () => {
   ctrl = new AbortController();
   const fd = new FormData(), lang = $('lang').value;
   fd.append('file', file); fd.append('language', lang); fd.append('hinglish', lang === 'hi');
-  fd.append('denoise', $('denoise').checked); fd.append('clean', $('clean').checked);
+  fd.append('denoise', $('denoise').checked); fd.append('clean', $('clean').checked); fd.append('parallel', turbo);
   try {
     const res = await api('/transcribe', { method: 'POST', body: fd, signal: ctrl.signal });
     if (!res.ok) throw new Error('Server returned ' + res.status);

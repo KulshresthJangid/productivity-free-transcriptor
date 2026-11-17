@@ -118,7 +118,8 @@ async def delete_transcript(tid: str, user=Depends(auth.current_user)):
 @app.post("/transcribe")
 async def transcribe(file: UploadFile = File(...), language: str = Form("hi"),
                      hinglish: bool = Form(True), denoise: bool = Form(True),
-                     clean: bool = Form(True), user=Depends(auth.current_user)):
+                     clean: bool = Form(True), parallel: bool = Form(False),
+                     user=Depends(auth.current_user)):
     workdir = transcriber.new_workdir()
     src = workdir / "upload.bin"
     try:
@@ -134,7 +135,7 @@ async def transcribe(file: UploadFile = File(...), language: str = Form("hi"),
         segments, duration = [], None
         try:
             async for ev in iterate_in_threadpool(
-                    transcriber.transcribe_stream(src, workdir, language, hinglish, denoise, clean)):
+                    transcriber.transcribe_stream(src, workdir, language, hinglish, denoise, clean, parallel)):
                 if ev["type"] == "segment":
                     segments.append({"start": ev["start"], "end": ev["end"], "text": ev["text"]})
                 elif ev["type"] == "info":

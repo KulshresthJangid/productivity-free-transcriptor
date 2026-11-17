@@ -32,27 +32,42 @@ SEED_PROMPT = (
     "jaise meeting, project, update bhi aise hi likhe jaate hain."
 )
 
-_model = None
+MAX_PARALLEL = int(os.getenv("MAX_PARALLEL", str(min(8, os.cpu_count() or 2))))
+_models = {}
+_resolved = None  # (device, compute) once the auto-detect warm-up has run
 _model_lock = threading.Lock()
 _job_lock = threading.Lock()  # one transcription at a time keeps RAM predictable
 
 
-def get_model():
-    global _model
+def get_model(workers=1):
+    """workers > 1 builds a model that can run that many chunks at once (weights are shared)."""
+    global _resolved
     with _model_lock:
-        if _model is None:
-            from faster_whisper import WhisperModel
-            m = WhisperModel(MODEL_SIZE, device=DEVICE, compute_type=COMPUTE)
-            if DEVICE == "auto":
-                # "auto" can pick a GPU whose CUDA libraries are missing; the failure only
-                # shows up on the first encode, so warm up once and fall back to CPU.
-                try:
-                    list(m.transcribe(np.zeros(SR, dtype=np.float32))[0])
-                except RuntimeError:
-                    print("GPU not usable, falling back to CPU (int8).")
-                    m = WhisperModel(MODEL_SIZE, device="cpu", compute_type="int8")
-            _model = m
-        return _model
+        if workers in _models:
+            return _models[workers]
+        from faster_whisper import WhisperModel
+        threads = max(1, (os.cpu_count() or 2) // workers)
+
+        def build(dev, comp):
+            return WhisperModel(MODEL_SIZE, device=dev, compute_type=comp,
+                                num_workers=workers, cpu_threads=threads)
+
+        if _resolved is None and DEVICE == "auto":
+            # "auto" can pick a GPU whose CUDA libraries are missing; the failure only
+            # shows up on the first encode, so warm up once and fall back to CPU.
+            m = build("auto", COMPUTE)
+            try:
+                list(m.transcribe(np.zeros(SR, dtype=np.float32))[0])
+                _resolved = ("auto", COMPUTE)
+            except RuntimeError:
+                print("GPU not usable, falling back to CPU (int8).")
+                _resolved = ("cpu", "int8")
+                m = build(*_resolved)
+        else:
+            _resolved = _resolved or (DEVICE, COMPUTE)
+            m = build(*_resolved)
+        _models[workers] = m
+        return m
 
 
 def sweep_stale(max_age=3600):
@@ -115,8 +130,36 @@ def read_slice(wav_path: Path, t0, t1):
     return np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
 
 
+def _transcribe_chunk(model, wav, t0, t1, lang, hinglish, clean, context, repeats):
+    """Yield (segment_dict, text) for one chunk."""
+    audio = read_slice(wav, t0, t1)
+    if hinglish:
+        prompt = (SEED_PROMPT + " " + context).strip()
+    else:
+        prompt = context or None
+    segs, _ = model.transcribe(
+        audio, language=lang, task="transcribe", beam_size=5,
+        initial_prompt=prompt, vad_filter=True,
+        vad_parameters={"min_silence_duration_ms": 500},
+        condition_on_previous_text=False,
+        temperature=[0.0, 0.2, 0.4], compression_ratio_threshold=2.2,
+        no_speech_threshold=0.6,
+    )
+    for s in segs:
+        text = s.text.strip()
+        if hinglish:
+            text = to_hinglish(text)
+        if clean:
+            text = cleanup.clean_text(text)
+            if cleanup.is_junk(s, text) or not repeats.keep(text):
+                continue
+        if not text:
+            continue
+        yield {"type": "segment", "start": t0 + s.start, "end": t0 + s.end, "text": text}
+
+
 def transcribe_stream(src: Path, workdir: Path, language="hi", hinglish=True,
-                      denoise=True, clean=True):
+                      denoise=True, clean=True, parallel=False):
     """Yield event dicts: status, info, segment, progress, done."""
     with _job_lock:
         wav = workdir / "audio.wav"
@@ -132,40 +175,35 @@ def transcribe_stream(src: Path, workdir: Path, language="hi", hinglish=True,
         chunks = plan_chunks(duration, find_silences(wav))
         yield {"type": "info", "duration": duration, "chunks": len(chunks)}
 
+        workers = min(len(chunks), MAX_PARALLEL) if parallel else 1
         yield {"type": "status", "message": f"Loading model ({MODEL_SIZE}); first run downloads it..."}
-        model = get_model()
+        model = get_model(workers)
         lang = None if language == "auto" else language
-        context = ""
-        repeats = cleanup.RepeatFilter()
-        for idx, (t0, t1) in enumerate(chunks):
-            yield {"type": "status", "message": f"Transcribing part {idx + 1} of {len(chunks)}..."}
-            audio = read_slice(wav, t0, t1)
-            if hinglish:
-                prompt = (SEED_PROMPT + " " + context).strip()
-            else:
-                prompt = context or None
-            segs, _ = model.transcribe(
-                audio, language=lang, task="transcribe", beam_size=5,
-                initial_prompt=prompt, vad_filter=True,
-                vad_parameters={"min_silence_duration_ms": 500},
-                condition_on_previous_text=False,
-                temperature=[0.0, 0.2, 0.4], compression_ratio_threshold=2.2,
-                no_speech_threshold=0.6,
-            )
-            texts = []
-            for s in segs:
-                text = s.text.strip()
-                if hinglish:
-                    text = to_hinglish(text)
-                if clean:
-                    text = cleanup.clean_text(text)
-                    if cleanup.is_junk(s, text) or not repeats.keep(text):
-                        continue
-                if not text:
-                    continue
-                texts.append(text)
-                yield {"type": "segment", "start": t0 + s.start, "end": t0 + s.end, "text": text}
-                yield {"type": "progress", "pct": min(99.0, (t0 + s.end) / duration * 100)}
-            context = " ".join(texts)[-200:]
-            del audio
+
+        if workers <= 1:
+            context, repeats = "", cleanup.RepeatFilter()
+            for idx, (t0, t1) in enumerate(chunks):
+                yield {"type": "status", "message": f"Transcribing part {idx + 1} of {len(chunks)}..."}
+                texts = []
+                for ev in _transcribe_chunk(model, wav, t0, t1, lang, hinglish, clean, context, repeats):
+                    texts.append(ev["text"])
+                    yield ev
+                    yield {"type": "progress", "pct": min(99.0, ev["end"] / duration * 100)}
+                context = " ".join(texts)[-200:]
+        else:
+            yield {"type": "status", "message": f"TURBO: {workers} parts at once..."}
+            from concurrent.futures import ThreadPoolExecutor
+            pool = ThreadPoolExecutor(max_workers=workers)
+            try:
+                # Parts are independent here (no text carried between them), each with its own repeat filter.
+                futures = [pool.submit(lambda t0=t0, t1=t1: list(_transcribe_chunk(
+                    model, wav, t0, t1, lang, hinglish, clean, "", cleanup.RepeatFilter())))
+                    for t0, t1 in chunks]
+                for idx, fut in enumerate(futures):   # emit in order so the text reads correctly
+                    for ev in fut.result():
+                        yield ev
+                    yield {"type": "progress", "pct": min(99.0, (idx + 1) / len(chunks) * 100)}
+                    yield {"type": "status", "message": f"TURBO: {idx + 1} of {len(chunks)} parts done..."}
+            finally:
+                pool.shutdown(wait=False, cancel_futures=True)
         yield {"type": "done"}
