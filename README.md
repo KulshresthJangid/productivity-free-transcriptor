@@ -13,13 +13,23 @@ FastAPI backend, MongoDB, plain HTML/JS front end, login via an httpOnly JWT coo
 
 ## Run with Docker (recommended)
 
-1. `copy .env.example .env`, then edit `.env`: set `MONGO_PASSWORD`, and `JWT_SECRET` (32+ random characters; generate with `openssl rand -hex 32`, or in PowerShell: `-join ((48..57)+(97..102) | Get-Random -Count 64 | % {[char]$_})`).
-2. `docker compose up -d --build`
+1. `cp .env.example .env`, then edit `.env`: set `MONGO_PASSWORD`, `JWT_SECRET` (32+ random characters, e.g. `openssl rand -hex 32`) and `DATA_DIR` (the mount point of your big disk, e.g. `/mnt/data1tb`).
+2. `./deploy.sh`
 3. Open http://localhost:8000, sign up, drop a file.
 
-The model (about 3 GB for `large-v3`) is downloaded once, when the app first starts, into the `models/` folder next to the code, and reused on every later start, rebuild or `docker compose down -v`. It then also works offline. Set `MODEL_DIR` to store it elsewhere, or `PRELOAD_MODEL=false` to download on first upload instead. On a CPU-only machine set `WHISPER_MODEL=small` or `medium` in `.env`.
+`deploy.sh` refuses to run if `DATA_DIR` is on the same disk as `/`, so nothing large lands on the system SSD. Under `DATA_DIR` it creates:
 
-Useful commands: `docker compose logs -f app`, `docker compose down` (keeps data), `docker compose down -v` (also wipes users and transcripts).
+| Folder | Holds |
+|---|---|
+| `models/` | the Whisper model (about 3 GB for `large-v3`), downloaded once and reused on every restart, rebuild or `down -v`; works offline afterwards |
+| `mongo/` | the database (users, transcript text) |
+| `tmp/` | uploads and temporary audio while a file is processed (deleted right after) |
+
+Docker's own image layers (about 1-2 GB) stay in `/var/lib/docker`. To move those too, set `"data-root"` in `/etc/docker/daemon.json` to a folder on the big disk and restart Docker.
+
+On a CPU-only machine set `WHISPER_MODEL=small` or `medium` in `.env`. Set `PRELOAD_MODEL=false` to download on the first upload instead of at startup.
+
+Useful commands: `docker compose logs -f app`, `docker compose down` (keeps data), `docker compose down` then delete `$DATA_DIR/mongo` to wipe users and transcripts.
 
 ## Run without Docker
 
