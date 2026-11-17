@@ -157,7 +157,7 @@ function setMode(m) {
 $('toggle').onclick = () => setMode(mode === 'login' ? 'register' : 'login');
 $('authform').onsubmit = async e => {
   e.preventDefault(); $('autherr').textContent = '';
-  const res = await fetch('/api/' + mode, {
+  const res = await fetch('api/' + mode, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
     body: JSON.stringify({ email: $('email').value, password: $('password').value })
   });
@@ -165,11 +165,11 @@ $('authform').onsubmit = async e => {
   if (!res.ok) { $('autherr').textContent = typeof data.detail === 'string' ? data.detail : 'Enter a valid email and a password of 8+ characters.'; return; }
   $('password').value = ''; showApp(data);
 };
-$('logout').onclick = async () => { await fetch('/api/logout', { method: 'POST' }); location.reload(); };
+$('logout').onclick = async () => { await fetch('api/logout', { method: 'POST' }); location.reload(); };
 
 // ---------- history ----------
 async function loadHistory() {
-  const items = await (await api('/api/transcripts')).json();
+  const items = await (await api('api/transcripts')).json();
   const box = $('history'); box.textContent = '';
   if (!items.length) { box.innerHTML = '<p class="muted">Nothing yet.</p>'; return; }
   for (const t of items) {
@@ -182,14 +182,14 @@ async function loadHistory() {
     del.onclick = async ev => {
       ev.stopPropagation();
       if (!confirm('Delete "' + t.title + '"?')) return;
-      await api('/api/transcripts/' + t.id, { method: 'DELETE' });
+      await api('api/transcripts/' + t.id, { method: 'DELETE' });
       loadHistory();
     };
     box.append(row);
   }
 }
 async function openTranscript(id) {
-  const t = await (await api('/api/transcripts/' + id)).json();
+  const t = await (await api('api/transcripts/' + id)).json();
   title = t.title.replace(/\.[^.]+$/, '');
   reset(); t.segments.forEach(addSeg); showResult();
   $('status').textContent = t.title;
@@ -301,7 +301,7 @@ $('go').onclick = () => {
     if (msg) $('status').textContent = msg;
     $('go').disabled = !file; $('stop').disabled = true; $('parts').hidden = true; showResult();
   };
-  xhr.open('POST', '/transcribe');
+  xhr.open('POST', 'transcribe');
   xhr.upload.onprogress = e => { if (e.lengthComputable) setProgress(e.loaded / e.total * 100); };
   xhr.upload.onload = () => { phase = 'Processing'; $('bar').value = 0; $('status').textContent = 'Processing...'; };
   xhr.onprogress = () => {
@@ -325,7 +325,7 @@ $('go').onclick = () => {
 
 // ---------- start ----------
 (async () => {
-  const res = await fetch('/api/me', { credentials: 'same-origin' });
+  const res = await fetch('api/me', { credentials: 'same-origin' });
   if (res.ok) showApp(await res.json()); else showAuth();
 })();
 </script>

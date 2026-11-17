@@ -6,7 +6,7 @@ services:
       MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER}
       MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD}
     volumes:
-      - ${DATA_DIR:?set DATA_DIR in .env (run ./deploy.sh)}/mongo:/data/db   # on the big disk
+      - ${DATA_DIR:?set DATA_DIR in .env (run ./deploy.sh)}/mongo:/data/db:z   # on the big disk
     # not published to the host: only the app container can reach it
 
   app:
@@ -15,7 +15,7 @@ services:
     depends_on:
       - mongo
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"   # nginx proxies /productivity/transcriptor/ here; not public
     environment:
       MONGO_URI: mongodb://${MONGO_USER}:${MONGO_PASSWORD}@mongo:27017/?authSource=admin
       MONGO_DB: transcriptor
@@ -27,6 +27,6 @@ services:
       HF_HOME: /models/hf        # keep all Hugging Face files on the big disk too
       TMPDIR: /data/tmp          # uploads + temp audio go to the big disk
     volumes:
-      - ${DATA_DIR:?set DATA_DIR in .env (run ./deploy.sh)}/models:/models   # model stored once, on the big disk
-      - ${DATA_DIR}/tmp:/data/tmp
+      - ${DATA_DIR:?set DATA_DIR in .env (run ./deploy.sh)}/models:/models:z   # model stored once, on the big disk
+      - ${DATA_DIR}/tmp:/data/tmp:z
 
