@@ -41,7 +41,16 @@ def get_model():
     with _model_lock:
         if _model is None:
             from faster_whisper import WhisperModel
-            _model = WhisperModel(MODEL_SIZE, device=DEVICE, compute_type=COMPUTE)
+            m = WhisperModel(MODEL_SIZE, device=DEVICE, compute_type=COMPUTE)
+            if DEVICE == "auto":
+                # "auto" can pick a GPU whose CUDA libraries are missing; the failure only
+                # shows up on the first encode, so warm up once and fall back to CPU.
+                try:
+                    list(m.transcribe(np.zeros(SR, dtype=np.float32))[0])
+                except RuntimeError:
+                    print("GPU not usable, falling back to CPU (int8).")
+                    m = WhisperModel(MODEL_SIZE, device="cpu", compute_type="int8")
+            _model = m
         return _model
 
 
