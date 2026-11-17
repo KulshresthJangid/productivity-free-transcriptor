@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hinglish Transcriptor</title>
+<style>
+  :root { --bg:#fff; --fg:#1b1d21; --muted:#6b7280; --line:#e3e5ea; --accent:#2f5bea; --card:#f6f7f9; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#14161a; --fg:#e8eaee; --muted:#9aa1ad; --line:#2a2e36; --accent:#6b8cff; --card:#1c1f25; } }
+  * { box-sizing: border-box; }
+  body { margin:0; font:16px/1.5 system-ui,sans-serif; background:var(--bg); color:var(--fg); }
+  main { max-width:760px; margin:0 auto; padding:32px 16px 64px; }
+  h1 { font-size:1.5rem; margin:0 0 4px; }
+  p.sub { color:var(--muted); margin:0 0 24px; }
+  #drop { border:2px dashed var(--line); border-radius:12px; padding:36px 16px; text-align:center; cursor:pointer; background:var(--card); }
+  #drop.over { border-color:var(--accent); }
+  .row { display:flex; gap:12px; flex-wrap:wrap; align-items:center; margin:16px 0; }
+  select, button { font:inherit; padding:8px 14px; border-radius:8px; border:1px solid var(--line); background:var(--card); color:var(--fg); }
+  button.primary { background:var(--accent); color:#fff; border-color:var(--accent); cursor:pointer; }
+  button:disabled { opacity:.5; cursor:default; }
+  progress { width:100%; height:10px; }
+  #status { color:var(--muted); font-size:.9rem; min-height:1.4em; }
+  #out { white-space:pre-wrap; background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; min-height:120px; margin-top:12px; }
+  .ts { color:var(--muted); font-size:.8rem; margin-right:6px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Hinglish Transcriptor</h1>
+  <p class="sub">Any audio or video, any length. Nothing is stored: the file is deleted as soon as it is transcribed.</p>
+
+  <div id="drop">Drop a file here or click to choose<br><small id="fname" style="color:var(--muted)"></small></div>
+  <input id="file" type="file" accept="audio/*,video/*,.mkv,.opus,.m4a,.amr,.wma" hidden>
+
+  <div class="row">
+    <label>Output
+      <select id="lang">
+        <option value="hi">Hinglish (Roman script)</option>
+        <option value="auto">Auto-detect language</option>
+        <option value="en">English</option>
+      </select>
+    </label>
+    <button id="go" class="primary" disabled>Transcribe</button>
+    <button id="stop" disabled>Stop</button>
+  </div>
+
+  <progress id="bar" value="0" max="100" hidden></progress>
+  <div id="status"></div>
+  <div id="out"></div>
+
+  <div class="row">
+    <button id="copy" disabled>Copy text</button>
+    <button id="dltxt" disabled>Download .txt</button>
+    <button id="dlsrt" disabled>Download .srt</button>
+  </div>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+let file = null, segs = [], ctrl = null;
+
+function pick(f) {
+  file = f || null;
+  $('fname').textContent = f ? f.name + " (" + (f.size / 1048576).toFixed(1) + " MB)" : "";
+  $('go').disabled = !f;
+}
+$('drop').onclick = () => $('file').click();
+$('file').onchange = e => pick(e.target.files[0]);
+$('drop').ondragover = e => { e.preventDefault(); $('drop').classList.add('over'); };
+$('drop').ondragleave = () => $('drop').classList.remove('over');
+$('drop').ondrop = e => { e.preventDefault(); $('drop').classList.remove('over'); pick(e.dataTransfer.files[0]); };
+
+const fmt = (t, comma) => {
+  const h = Math.floor(t / 3600), m = Math.floor(t % 3600 / 60), s = Math.floor(t % 60), ms = Math.floor((t % 1) * 1000);
+  const p = (n, l = 2) => String(n).padStart(l, '0');
+  return `${p(h)}:${p(m)}:${p(s)}${comma ? ',' + p(ms, 3) : ''}`;
+};
+const text = () => segs.map(s => s.text).join(' ');
+const srt = () => segs.map((s, i) => `${i + 1}\n${fmt(s.start, 1)} --> ${fmt(s.end, 1)}\n${s.text}\n`).join('\n');
+function save(name, data) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([data], { type: 'text/plain;charset=utf-8' }));
+  a.download = name; a.click(); URL.revokeObjectURL(a.href);
+}
+const base = () => (file ? file.name.replace(/\.[^.]+$/, '') : 'transcript');
+$('copy').onclick = () => navigator.clipboard.writeText(text());
+$('dltxt').onclick = () => save(base() + '.txt', text());
+$('dlsrt').onclick = () => save(base() + '.srt', srt());
+$('stop').onclick = () => ctrl && ctrl.abort();
+
+function addSeg(s) {
+  segs.push(s);
+  const line = document.createElement('div');
+  const ts = document.createElement('span');
+  ts.className = 'ts'; ts.textContent = fmt(s.start);
+  line.append(ts, document.createTextNode(s.text));
+  $('out').append(line);
+}
+
+$('go').onclick = async () => {
+  segs = []; $('out').textContent = ''; $('bar').hidden = false; $('bar').value = 0;
+  ['go', 'copy', 'dltxt', 'dlsrt'].forEach(i => $(i).disabled = true); $('stop').disabled = false;
+  $('status').textContent = 'Uploading...';
+  ctrl = new AbortController();
+  const fd = new FormData();
+  fd.append('file', file); fd.append('language', $('lang').value); fd.append('hinglish', $('lang').value === 'hi');
+  try {
+    const res = await fetch('/transcribe', { method: 'POST', body: fd, signal: ctrl.signal });
+    if (!res.ok) throw new Error('Server returned ' + res.status);
+    const reader = res.body.getReader(), dec = new TextDecoder();
+    let buf = '';
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let nl;
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, nl).trim(); buf = buf.slice(nl + 1);
+        if (!line) continue;
+        const ev = JSON.parse(line);
+        if (ev.type === 'status') $('status').textContent = ev.message;
+        else if (ev.type === 'segment') addSeg(ev);
+        else if (ev.type === 'progress') $('bar').value = ev.pct;
+        else if (ev.type === 'error') $('status').textContent = 'Error: ' + ev.message;
+        else if (ev.type === 'done') { $('bar').value = 100; $('status').textContent = 'Done.'; }
+      }
+    }
+  } catch (e) {
+    $('status').textContent = e.name === 'AbortError' ? 'Stopped.' : 'Failed: ' + e.message;
+  }
+  $('go').disabled = !file; $('stop').disabled = true;
+  if (segs.length) ['copy', 'dltxt', 'dlsrt'].forEach(i => $(i).disabled = false);
+};
+</script>
+</body>
+</html>
