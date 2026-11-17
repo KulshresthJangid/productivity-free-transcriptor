@@ -23,9 +23,9 @@ services:
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
       WHISPER_MODEL: ${WHISPER_MODEL:-large-v3}
       WHISPER_DEVICE: ${WHISPER_DEVICE:-auto}
+      MODEL_DIR: /models
     volumes:
-      - model-cache:/root/.cache/huggingface   # keeps the downloaded model between restarts
+      - ./models:/models   # downloaded model is kept here on disk, survives rebuilds and `down -v`
 
 volumes:
   mongo-data:
-  model-cache:

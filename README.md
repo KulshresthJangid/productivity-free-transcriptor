@@ -17,7 +17,7 @@ FastAPI backend, MongoDB, plain HTML/JS front end, login via an httpOnly JWT coo
 2. `docker compose up -d --build`
 3. Open http://localhost:8000, sign up, drop a file.
 
-The first transcription downloads the model (about 3 GB for `large-v3`) into the `model-cache` volume; later runs reuse it. On a CPU-only machine set `WHISPER_MODEL=small` or `medium` in `.env`.
+The model (about 3 GB for `large-v3`) is downloaded once, when the app first starts, into the `models/` folder next to the code, and reused on every later start, rebuild or `docker compose down -v`. It then also works offline. Set `MODEL_DIR` to store it elsewhere, or `PRELOAD_MODEL=false` to download on first upload instead. On a CPU-only machine set `WHISPER_MODEL=small` or `medium` in `.env`.
 
 Useful commands: `docker compose logs -f app`, `docker compose down` (keeps data), `docker compose down -v` (also wipes users and transcripts).
 

@@ -1,6 +1,7 @@
 import json
 import os
 import shutil
+import threading
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -28,6 +29,9 @@ async def lifespan(app):
     transcriber.sweep_stale()
     if shutil.which("ffmpeg") is None:
         print("WARNING: ffmpeg not found on PATH. Install it; nothing works without it.")
+    if os.getenv("PRELOAD_MODEL", "true").lower() == "true":
+        # download (first time only) and load the model now, so the first upload doesn't wait
+        threading.Thread(target=transcriber.get_model, daemon=True).start()
     client = AsyncMongoClient(MONGO_URI)
     app.state.db = client[MONGO_DB]
     await app.state.db.users.create_index("email", unique=True)

@@ -21,6 +21,8 @@ from hinglish import to_hinglish
 MODEL_SIZE = os.getenv("WHISPER_MODEL", "large-v3")
 DEVICE = os.getenv("WHISPER_DEVICE", "auto")            # auto | cpu | cuda
 COMPUTE = os.getenv("WHISPER_COMPUTE", "auto")          # auto: float16 on GPU, int8 on CPU
+# Models are saved here once and reused on every start (mount it as a volume in Docker).
+MODEL_DIR = os.getenv("MODEL_DIR", str(Path(__file__).parent / "models"))
 CHUNK_SECONDS = int(os.getenv("CHUNK_SECONDS", "600"))  # target chunk length
 TMP_PREFIX = "hinglish-tx-"
 SR = 16000
@@ -49,8 +51,13 @@ def get_model(workers=1):
         threads = max(1, (os.cpu_count() or 2) // workers)
 
         def build(dev, comp):
-            return WhisperModel(MODEL_SIZE, device=dev, compute_type=comp,
-                                num_workers=workers, cpu_threads=threads)
+            kw = dict(device=dev, compute_type=comp, num_workers=workers,
+                      cpu_threads=threads, download_root=MODEL_DIR)
+            try:  # already saved? load straight from disk, no network check
+                return WhisperModel(MODEL_SIZE, local_files_only=True, **kw)
+            except Exception:
+                print(f"Downloading model '{MODEL_SIZE}' to {MODEL_DIR} (one time)...")
+                return WhisperModel(MODEL_SIZE, **kw)
 
         if _resolved is None and DEVICE == "auto":
             # "auto" can pick a GPU whose CUDA libraries are missing; the failure only
