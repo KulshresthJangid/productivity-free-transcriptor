@@ -42,6 +42,8 @@
   #out { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px 16px; margin-top:12px; line-height:1.7; }
   #out .ts { color:var(--muted); font-size:.75rem; margin-right:8px; font-variant-numeric:tabular-nums; }
   #out div { margin-bottom:4px; }
+  #out p { margin:0 0 14px; }
+  #out p:last-child { margin-bottom:0; }
   #parts { display:grid; grid-template-columns:repeat(auto-fill,minmax(130px,1fr)); gap:6px 12px; margin-top:10px; font-size:.8rem; color:var(--muted); }
   #parts progress { height:6px; margin:0; }
   .exports { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-top:12px; }
@@ -94,6 +96,11 @@
       <option value="hi">Hinglish (Roman letters)</option>
       <option value="auto">Auto-detect language</option>
       <option value="en">English</option>
+    </select>
+    <select id="outfmt" aria-label="Output format">
+      <option value="paras">Output: paragraphs</option>
+      <option value="paras-ts">Output: paragraphs with timestamps</option>
+      <option value="lines">Output: timestamped lines</option>
     </select>
     <label><input type="checkbox" id="denoise" checked><span>Reduce background noise <small>(cleans audio first)</small></span></label>
     <label><input type="checkbox" id="clean" checked><span>Remove junk <small>(laughing, music, "hmm", nonsense lines)</small></span></label>
@@ -205,7 +212,6 @@ const fmt = (t, comma) => {
   const p = (n, l = 2) => String(n).padStart(l, '0');
   return `${p(h)}:${p(m)}:${p(s)}${comma ? ',' + p(ms, 3) : ''}`;
 };
-const text = () => segs.map(s => s.text).join(' ');
 const srt = () => segs.map((s, i) => `${i + 1}\n${fmt(s.start, 1)} --> ${fmt(s.end, 1)}\n${s.text}\n`).join('\n');
 function save(name, data) {
   const a = document.createElement('a');
@@ -216,13 +222,57 @@ $('copy').onclick = async () => { await navigator.clipboard.writeText(text()); $
 $('dltxt').onclick = () => save(title + '.txt', text());
 $('dlsrt').onclick = () => save(title + '.srt', srt());
 $('stop').onclick = () => ctrl && ctrl.abort();
-function addSeg(s) {
-  segs.push(s);
-  const line = document.createElement('div'), ts = document.createElement('span');
-  ts.className = 'ts'; ts.textContent = fmt(s.start);
-  line.append(ts, document.createTextNode(s.text));
-  $('out').append(line);
+// ---------- output formats ----------
+// New paragraph when the speaker pauses, or at a sentence end once it is getting long.
+const PAUSE = 1.5, SOFT_MAX = 450, HARD_MAX = 900, END = /[.?!।]["')\]]*$/;
+function paragraphs() {
+  const out = [];
+  let cur = null, prevEnd = 0;
+  for (const s of segs) {
+    if (cur && (s.start - prevEnd > PAUSE || cur.text.length > HARD_MAX
+                || (cur.text.length > SOFT_MAX && END.test(cur.text)))) { out.push(cur); cur = null; }
+    if (!cur) cur = { start: s.start, text: s.text };
+    else cur.text += ' ' + s.text;
+    prevEnd = s.end;
+  }
+  if (cur) out.push(cur);
+  return out;
 }
+let renderQueued = false;
+function render() {
+  renderQueued = false;
+  const box = $('out'), mode = $('outfmt').value;
+  box.textContent = '';
+  if (mode === 'lines') {
+    for (const s of segs) {
+      const line = document.createElement('div'), ts = document.createElement('span');
+      ts.className = 'ts'; ts.textContent = fmt(s.start);
+      line.append(ts, document.createTextNode(s.text));
+      box.append(line);
+    }
+  } else {
+    for (const p of paragraphs()) {
+      const el = document.createElement('p');
+      if (mode === 'paras-ts') {
+        const ts = document.createElement('span');
+        ts.className = 'ts'; ts.textContent = fmt(p.start);
+        el.append(ts);
+      }
+      el.append(document.createTextNode(p.text));
+      box.append(el);
+    }
+  }
+}
+// Many segments can arrive at once (replay), so redraw at most once per frame.
+function scheduleRender() { if (!renderQueued) { renderQueued = true; requestAnimationFrame(render); } }
+function addSeg(s) { segs.push(s); scheduleRender(); }
+$('outfmt').value = localStorage.getItem('outfmt') || 'paras';
+$('outfmt').onchange = () => { localStorage.setItem('outfmt', $('outfmt').value); render(); };
+const text = () => {
+  const mode = $('outfmt').value;
+  if (mode === 'lines') return segs.map(s => s.text).join(' ');
+  return paragraphs().map(p => (mode === 'paras-ts' ? '[' + fmt(p.start) + '] ' : '') + p.text).join('\n\n');
+};
 
 // ---------- turbo (parallel) ----------
 let turbo = false;
