@@ -74,6 +74,10 @@ async def register(body: Credentials, response: Response):
 async def login(body: Credentials, response: Response):
     user = await app.state.db.users.find_one({"email": body.email.lower()})
     if not user or not auth.verify_password(body.password, user["password"]):
+        # The browser always gets the same message (no account enumeration); the server log says why.
+        e = body.email.lower()
+        who = e[:1] + "***@" + e.split("@")[-1]
+        print(f"login failed for {who}: {'no such account' if not user else 'wrong password'}", flush=True)
         raise HTTPException(401, "Wrong email or password")
     auth.set_session(response, str(user["_id"]))
     return public(user)
