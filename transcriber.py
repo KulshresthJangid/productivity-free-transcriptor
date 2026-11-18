@@ -35,6 +35,14 @@ SEED_PROMPT = (
     "jaise meeting, project, update bhi aise hi likhe jaate hain."
 )
 
+# Devanagari seed with English words left in Latin: nudges Whisper to write Hindi in Devanagari
+# and keep English words (meeting, project, client...) as English instead of transliterating them.
+DEVANAGARI_SEED = (
+    "हाँ तो आज हम बात करेंगे कि ये project कैसे काम करता है। "
+    "देखो, मैं कह रहा हूँ कि ये update बिल्कुल ठीक है, और meeting, deadline, client "
+    "जैसे English words ऐसे ही लिखे जाते हैं।"
+)
+
 MAX_PARALLEL = int(os.getenv("MAX_PARALLEL", str(min(8, os.cpu_count() or 2))))
 _models = {}
 _resolved = None  # (device, compute) once the auto-detect warm-up has run
@@ -166,6 +174,8 @@ def _transcribe_chunk(model, wav, t0, t1, lang, hinglish, clean, context, repeat
     audio = read_slice(wav, t0, t1)
     if hinglish:
         prompt = (SEED_PROMPT + " " + context).strip()
+    elif lang == "hi":    # Hindi in Devanagari, English words kept in English
+        prompt = (DEVANAGARI_SEED + " " + context).strip()
     else:
         prompt = context or None
     segs, _ = model.transcribe(

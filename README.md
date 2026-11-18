@@ -60,6 +60,11 @@ uvicorn app:app --port 8000
 | GET | `/api/transcripts`, `/api/transcripts/{id}` | your history only |
 | DELETE | `/api/transcripts/{id}` | |
 
+## Output scripts
+
+- **Hindi (Devanagari) + English words** (default): Hindi in Devanagari, English words kept in English. Whisper is steered with a mixed-script seed prompt (`DEVANAGARI_SEED` in `transcriber.py`).
+- **Hinglish (Roman letters)**: Hindi transliterated to Roman, English words kept as English.
+
 ## How jobs run
 
 `app` (web) only handles login, uploads and the queue. `worker` takes one job at a time from a RabbitMQ queue (`scripts/setup-rabbitmq.sh` creates its vhost and user), runs it in a container capped at `WORKER_CPUS` cores and low priority, and writes progress and text to MongoDB. The page follows the job over a WebSocket, so a closed tab or dropped connection never loses work: reload and it resumes. Limits: `MAX_ACTIVE_PER_USER` (2) and `MAX_QUEUE` (20). A job interrupted by a restart is retried once.

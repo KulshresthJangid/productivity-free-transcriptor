@@ -90,6 +90,7 @@
 
   <div class="opts">
     <select id="lang" aria-label="Language">
+      <option value="hi-dev">Hindi (Devanagari) + English words</option>
       <option value="hi">Hinglish (Roman letters)</option>
       <option value="auto">Auto-detect language</option>
       <option value="en">English</option>
@@ -424,7 +425,7 @@ $('go').onclick = async () => {
     phase = 'Queued'; $('bar').value = 0; $('status').textContent = 'Queuing...';
     const lang = $('lang').value;
     const r = await api('transcribe/' + uid, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ language: lang, hinglish: lang === 'hi', denoise: $('denoise').checked,
+      body: JSON.stringify({ language: lang === 'hi-dev' ? 'hi' : lang, hinglish: lang === 'hi', denoise: $('denoise').checked,
                              clean: $('clean').checked, parallel: turbo }) });
     if (!r.ok) return stop('Failed: ' + await detail(r));
     done = true;                       // upload phase finished; the job takes over the UI
